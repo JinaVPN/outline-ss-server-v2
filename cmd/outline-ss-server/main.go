@@ -71,6 +71,49 @@ type SSServer struct {
 	ports       map[int]*ssPort
 }
 
+func (s *SSServer) AddKey(key key.Key, source key.Source) error {
+	if _, ok := s.ports[key.Port]; !ok {
+		if err := s.startPort(key.Port); err != nil {
+			return fmt.Errorf("failed to start port %v: %v", key.Port, err)
+		}
+		// s.m.Ports().Inc()
+	}
+
+	// cipher, err := ss.NewCipher(key.Cipher, key.Secret)
+
+	cryptoKey, err := shadowsocks.NewEncryptionKey(key.Cipher, key.Secret)
+	if err != nil {
+		return fmt.Errorf("failed to create encyption key for key %v: %w", key.ID, err)
+	}
+	cipher := service.MakeCipherEntry(key.ID, cryptoKey, key.Secret)
+
+	if err != nil {
+		return fmt.Errorf("failed to create cipher for key %v: %v", key.ID, err)
+	}
+	entry := service.MakeCipherEntry(key.ID, cipher, key.Secret, source)
+	s.ports[key.Port].cipherList.AddEntry(&entry)
+	// s.m.AccessKeys().Inc()
+
+	return nil
+}
+
+func (s *SSServer) RemoveKey(key key.Key, source key.Source) error {
+	if _, ok := s.ports[key.Port]; !ok {
+		return nil
+	}
+	if !s.ports[key.Port].cipherList.RemoveEntry(key.ID) {
+		logger.Warningf("Attempted to remove non-existing key %s", key.ID)
+	}
+	// s.m.AccessKeys().Dec()
+	if s.ports[key.Port].cipherList.Len() == 0 {
+		if err := s.removePort(key.Port); err != nil {
+			return fmt.Errorf("failed to remove port %v: %v", key.Port, err)
+		}
+		// s.m.Ports().Dec()
+	}
+	return nil
+}
+
 func (s *SSServer) startPort(portNum int) error {
 	listener, err := net.ListenTCP("tcp", &net.TCPAddr{Port: portNum})
 	if err != nil {
