@@ -3,6 +3,7 @@ module github.com/Jigsaw-Code/outline-ss-server
 require (
 	github.com/Jigsaw-Code/outline-sdk v0.0.14
 	github.com/go-task/task/v3 v3.34.1
+	github.com/google/addlicense v1.1.1
 	github.com/google/go-licenses v1.6.0
 	github.com/goreleaser/goreleaser v1.18.2
 	github.com/op/go-logging v0.0.0-20160315200505-970db520ece7
@@ -12,7 +13,7 @@ require (
 	github.com/stretchr/testify v1.8.4
 	golang.org/x/crypto v0.17.0
 	golang.org/x/term v0.16.0
-	gopkg.in/yaml.v2 v2.4.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -79,6 +80,7 @@ require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/blakesmith/ar v0.0.0-20190502131153-809d4375e1fb // indirect
+	github.com/bmatcuk/doublestar/v4 v4.0.2 // indirect
 	github.com/caarlos0/ctrlc v1.2.0 // indirect
 	github.com/caarlos0/env/v8 v8.0.0 // indirect
 	github.com/caarlos0/go-reddit/v3 v3.0.1 // indirect
@@ -172,6 +174,7 @@ require (
 	github.com/klauspost/pgzip v1.2.5 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/letsencrypt/boulder v0.0.0-20221109233200-85aa52084eaf // indirect
+	github.com/lmittmann/tint v1.0.5 // indirect
 	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
 	github.com/magiconair/properties v1.8.7 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
@@ -263,11 +266,11 @@ require (
 	gopkg.in/src-d/go-billy.v4 v4.3.2 // indirect
 	gopkg.in/src-d/go-git.v4 v4.13.1 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
+	gopkg.in/yaml.v2 v2.4.0 // indirect
 	k8s.io/klog/v2 v2.90.0 // indirect
 	mvdan.cc/sh/v3 v3.7.0 // indirect
 	sigs.k8s.io/kind v0.17.0 // indirect
 	sigs.k8s.io/yaml v1.3.0 // indirect
 )
 
-go 1.20
+go 1.21
