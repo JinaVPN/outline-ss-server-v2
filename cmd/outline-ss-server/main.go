@@ -16,7 +16,6 @@ package main
 
 import (
 	"container/list"
-	"context"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -29,9 +28,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Jigsaw-Code/outline-sdk/transport"
 	"github.com/Jigsaw-Code/outline-sdk/transport/shadowsocks"
 	"github.com/Jigsaw-Code/outline-ss-server/ipinfo"
+	outline_prometheus "github.com/Jigsaw-Code/outline-ss-server/prometheus"
 	"github.com/Jigsaw-Code/outline-ss-server/service"
 	"github.com/lmittmann/tint"
 	"github.com/prometheus/client_golang/prometheus"
@@ -58,104 +57,16 @@ func init() {
 	)
 }
 
-type SSServer struct {
-	stopConfig  func() error
-	lnManager   service.ListenerManager
-	natTimeout  time.Duration
-	m           *outlineMetrics
-	replayCache service.ReplayCache
-	ports       map[int]*ssPort
+type OutlineServer struct {
+	stopConfig     func() error
+	lnManager      service.ListenerManager
+	natTimeout     time.Duration
+	serverMetrics  *serverMetrics
+	serviceMetrics service.ServiceMetrics
+	replayCache    service.ReplayCache
 }
 
-func (s *SSServer) AddKey(key key.Key, source key.Source) error {
-	if _, ok := s.ports[key.Port]; !ok {
-		if err := s.startPort(key.Port); err != nil {
-			return fmt.Errorf("failed to start port %v: %v", key.Port, err)
-		}
-		// s.m.Ports().Inc()
-	}
-
-	// cipher, err := ss.NewCipher(key.Cipher, key.Secret)
-
-	cryptoKey, err := shadowsocks.NewEncryptionKey(key.Cipher, key.Secret)
-	if err != nil {
-		return fmt.Errorf("failed to create encyption key for key %v: %w", key.ID, err)
-	}
-	cipher := service.MakeCipherEntry(key.ID, cryptoKey, key.Secret)
-
-	if err != nil {
-		return fmt.Errorf("failed to create cipher for key %v: %v", key.ID, err)
-	}
-	entry := service.MakeCipherEntry(key.ID, cipher, key.Secret, source)
-	s.ports[key.Port].cipherList.AddEntry(&entry)
-	// s.m.AccessKeys().Inc()
-
-	return nil
-}
-
-func (s *SSServer) RemoveKey(key key.Key, source key.Source) error {
-	if _, ok := s.ports[key.Port]; !ok {
-		return nil
-	}
-	if !s.ports[key.Port].cipherList.RemoveEntry(key.ID) {
-		logger.Warningf("Attempted to remove non-existing key %s", key.ID)
-	}
-	// s.m.AccessKeys().Dec()
-	if s.ports[key.Port].cipherList.Len() == 0 {
-		if err := s.removePort(key.Port); err != nil {
-			return fmt.Errorf("failed to remove port %v: %v", key.Port, err)
-		}
-		// s.m.Ports().Dec()
-	}
-	return nil
-}
-
-func (s *SSServer) startPort(portNum int) error {
-	listener, err := net.ListenTCP("tcp", &net.TCPAddr{Port: portNum})
-	if err != nil {
-		//lint:ignore ST1005 Shadowsocks is capitalized.
-		return fmt.Errorf("Shadowsocks TCP service failed to start on port %v: %w", portNum, err)
-	}
-	logger.Infof("Shadowsocks TCP service listening on %v", listener.Addr().String())
-	packetConn, err := net.ListenUDP("udp", &net.UDPAddr{Port: portNum})
-	if err != nil {
-		//lint:ignore ST1005 Shadowsocks is capitalized.
-		return fmt.Errorf("Shadowsocks UDP service failed to start on port %v: %w", portNum, err)
-	}
-	logger.Infof("Shadowsocks UDP service listening on %v", packetConn.LocalAddr().String())
-	port := &ssPort{tcpListener: listener, packetConn: packetConn, cipherList: service.NewCipherList()}
-	authFunc := service.NewShadowsocksStreamAuthenticator(port.cipherList, &s.replayCache, s.m)
-	// TODO: Register initial data metrics at zero.
-	tcpHandler := service.NewTCPHandler(listener.Addr().String(), authFunc, s.m, tcpReadTimeout)
-	packetHandler := service.NewPacketHandler(s.natTimeout, port.cipherList, s.m)
-	s.ports[portNum] = port
-	go service.StreamServe(service.WrapStreamListener(listener.AcceptTCP), tcpHandler.Handle)
-	go packetHandler.Handle(port.packetConn)
-	return nil
-}
-
-func (s *SSServer) removePort(portNum int) error {
-	port, ok := s.ports[portNum]
-	if !ok {
-		return fmt.Errorf("port %v doesn't exist", portNum)
-	}
-	tcpErr := port.tcpListener.Close()
-	udpErr := port.packetConn.Close()
-	delete(s.ports, portNum)
-	if tcpErr != nil {
-		//lint:ignore ST1005 Shadowsocks is capitalized.
-		return fmt.Errorf("Shadowsocks TCP service on port %v failed to stop: %w", portNum, tcpErr)
-	}
-	logger.Infof("Shadowsocks TCP service on port %v stopped", portNum)
-	if udpErr != nil {
-		//lint:ignore ST1005 Shadowsocks is capitalized.
-		return fmt.Errorf("Shadowsocks UDP service on port %v failed to stop: %w", portNum, udpErr)
-	}
-	logger.Infof("Shadowsocks UDP service on port %v stopped", portNum)
-	return nil
-}
-
-func (s *SSServer) loadConfig(filename string) error {
+func (s *OutlineServer) loadConfig(filename string) error {
 	configData, err := os.ReadFile(filename)
 	if err != nil {
 		return fmt.Errorf("failed to read config file %s: %w", filename, err)
@@ -207,32 +118,6 @@ func newCipherListFromConfig(config ServiceConfig) (service.CipherList, error) {
 	ciphers.Update(cipherList)
 
 	return ciphers, nil
-}
-
-func (s *SSServer) NewShadowsocksStreamHandler(ciphers service.CipherList) service.StreamHandler {
-	authFunc := service.NewShadowsocksStreamAuthenticator(ciphers, &s.replayCache, s.m.tcpServiceMetrics)
-	// TODO: Register initial data metrics at zero.
-	return service.NewStreamHandler(authFunc, tcpReadTimeout)
-}
-
-func (s *SSServer) NewShadowsocksPacketHandler(ciphers service.CipherList) service.PacketHandler {
-	return service.NewPacketHandler(s.natTimeout, ciphers, s.m, s.m.udpServiceMetrics)
-}
-
-func (s *SSServer) NewShadowsocksStreamHandlerFromConfig(config ServiceConfig) (service.StreamHandler, error) {
-	ciphers, err := newCipherListFromConfig(config)
-	if err != nil {
-		return nil, err
-	}
-	return s.NewShadowsocksStreamHandler(ciphers), nil
-}
-
-func (s *SSServer) NewShadowsocksPacketHandlerFromConfig(config ServiceConfig) (service.PacketHandler, error) {
-	ciphers, err := newCipherListFromConfig(config)
-	if err != nil {
-		return nil, err
-	}
-	return s.NewShadowsocksPacketHandler(ciphers), nil
 }
 
 type listenerSet struct {
@@ -296,7 +181,7 @@ func (ls *listenerSet) Len() int {
 	return len(ls.listenerCloseFuncs)
 }
 
-func (s *SSServer) runConfig(config Config) (func() error, error) {
+func (s *OutlineServer) runConfig(config Config) (func() error, error) {
 	startErrCh := make(chan error)
 	stopErrCh := make(chan error)
 	stopCh := make(chan struct{})
@@ -332,31 +217,41 @@ func (s *SSServer) runConfig(config Config) (func() error, error) {
 				ciphers := service.NewCipherList()
 				ciphers.Update(cipherList)
 
-				sh := s.NewShadowsocksStreamHandler(ciphers)
+				ssService, err := service.NewShadowsocksService(
+					service.WithCiphers(ciphers),
+					service.WithNatTimeout(s.natTimeout),
+					service.WithMetrics(s.serviceMetrics),
+					service.WithReplayCache(&s.replayCache),
+				)
 				ln, err := lnSet.ListenStream(addr)
 				if err != nil {
 					return err
 				}
 				slog.Info("TCP service started.", "address", ln.Addr().String())
-				go service.StreamServe(ln.AcceptStream, func(ctx context.Context, conn transport.StreamConn) {
-					connMetrics := s.m.AddOpenTCPConnection(conn)
-					sh.Handle(ctx, conn, connMetrics)
-				})
+				go service.StreamServe(ln.AcceptStream, ssService.HandleStream)
 
 				pc, err := lnSet.ListenPacket(addr)
 				if err != nil {
 					return err
 				}
 				slog.Info("UDP service started.", "address", pc.LocalAddr().String())
-				ph := s.NewShadowsocksPacketHandler(ciphers)
-				go ph.Handle(pc)
+				go ssService.HandlePacket(pc)
 			}
 
 			for _, serviceConfig := range config.Services {
-				var (
-					sh service.StreamHandler
-					ph service.PacketHandler
+				ciphers, err := newCipherListFromConfig(serviceConfig)
+				if err != nil {
+					return fmt.Errorf("failed to create cipher list from config: %v", err)
+				}
+				ssService, err := service.NewShadowsocksService(
+					service.WithCiphers(ciphers),
+					service.WithNatTimeout(s.natTimeout),
+					service.WithMetrics(s.serviceMetrics),
+					service.WithReplayCache(&s.replayCache),
 				)
+				if err != nil {
+					return err
+				}
 				for _, lnConfig := range serviceConfig.Listeners {
 					switch lnConfig.Type {
 					case listenerTypeTCP:
@@ -365,36 +260,21 @@ func (s *SSServer) runConfig(config Config) (func() error, error) {
 							return err
 						}
 						slog.Info("TCP service started.", "address", ln.Addr().String())
-						if sh == nil {
-							sh, err = s.NewShadowsocksStreamHandlerFromConfig(serviceConfig)
-							if err != nil {
-								return err
-							}
-						}
-						go service.StreamServe(ln.AcceptStream, func(ctx context.Context, conn transport.StreamConn) {
-							connMetrics := s.m.AddOpenTCPConnection(conn)
-							sh.Handle(ctx, conn, connMetrics)
-						})
+						go service.StreamServe(ln.AcceptStream, ssService.HandleStream)
 					case listenerTypeUDP:
 						pc, err := lnSet.ListenPacket(lnConfig.Address)
 						if err != nil {
 							return err
 						}
 						slog.Info("UDP service started.", "address", pc.LocalAddr().String())
-						if ph == nil {
-							ph, err = s.NewShadowsocksPacketHandlerFromConfig(serviceConfig)
-							if err != nil {
-								return err
-							}
-						}
-						go ph.Handle(pc)
+						go ssService.HandlePacket(pc)
 					}
 				}
 				totalCipherCount += len(serviceConfig.Keys)
 			}
 
 			slog.Info("Loaded config.", "access_keys", totalCipherCount, "listeners", lnSet.Len())
-			s.m.SetNumAccessKeys(totalCipherCount, lnSet.Len())
+			s.serverMetrics.SetNumAccessKeys(totalCipherCount, lnSet.Len())
 			return nil
 		}()
 
@@ -416,7 +296,7 @@ func (s *SSServer) runConfig(config Config) (func() error, error) {
 }
 
 // Stop stops serving the current config.
-func (s *SSServer) Stop() error {
+func (s *OutlineServer) Stop() error {
 	stopFunc := s.stopConfig
 	if stopFunc == nil {
 		return nil
@@ -429,13 +309,14 @@ func (s *SSServer) Stop() error {
 	return nil
 }
 
-// RunSSServer starts a shadowsocks server running, and returns the server or an error.
-func RunSSServer(filename string, natTimeout time.Duration, sm *outlineMetrics, replayHistory int) (*SSServer, error) {
-	server := &SSServer{
-		lnManager:   service.NewListenerManager(),
-		natTimeout:  natTimeout,
-		m:           sm,
-		replayCache: service.NewReplayCache(replayHistory),
+// RunOutlineServer starts an Outline server running, and returns the server or an error.
+func RunOutlineServer(filename string, natTimeout time.Duration, serverMetrics *serverMetrics, serviceMetrics service.ServiceMetrics, replayHistory int) (*OutlineServer, error) {
+	server := &OutlineServer{
+		lnManager:      service.NewListenerManager(),
+		natTimeout:     natTimeout,
+		serverMetrics:  serverMetrics,
+		serviceMetrics: serviceMetrics,
+		replayCache:    service.NewReplayCache(replayHistory),
 	}
 	err := server.loadConfig(filename)
 	if err != nil {
@@ -513,14 +394,16 @@ func main() {
 	}
 	defer ip2info.Close()
 
-	metrics, err := newPrometheusOutlineMetrics(ip2info)
+	serverMetrics := newPrometheusServerMetrics()
+	serverMetrics.SetVersion(version)
+	serviceMetrics, err := outline_prometheus.NewServiceMetrics(ip2info)
 	if err != nil {
-		slog.Error("Failed to create Outline Prometheus metrics. Aborting.", "err", err)
+		slog.Error("Failed to create Outline Prometheus service metrics. Aborting.", "err", err)
 	}
-	metrics.SetBuildInfo(version)
 	r := prometheus.WrapRegistererWithPrefix("shadowsocks_", prometheus.DefaultRegisterer)
-	r.MustRegister(metrics)
-	_, err = RunSSServer(flags.ConfigFile, flags.natTimeout, metrics, flags.replayHistory)
+	r.MustRegister(serverMetrics, serviceMetrics)
+
+	_, err = RunOutlineServer(flags.ConfigFile, flags.natTimeout, serverMetrics, serviceMetrics, flags.replayHistory)
 	if err != nil {
 		slog.Error("Server failed to start. Aborting.", "err", err)
 	}
