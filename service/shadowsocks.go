@@ -16,6 +16,7 @@ package service
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"time"
 
@@ -50,6 +51,7 @@ type Service interface {
 type Option func(s *ssService)
 
 type ssService struct {
+	logger      *slog.Logger
 	metrics     ServiceMetrics
 	ciphers     CipherList
 	natTimeout  time.Duration
@@ -59,7 +61,7 @@ type ssService struct {
 	ph PacketHandler
 }
 
-// NewShadowsocksService creates a new service
+// NewShadowsocksService creates a new Shadowsocks service.
 func NewShadowsocksService(opts ...Option) (Service, error) {
 	s := &ssService{}
 
@@ -67,18 +69,34 @@ func NewShadowsocksService(opts ...Option) (Service, error) {
 		opt(s)
 	}
 
+	// If no NAT timeout is provided via options, use the recommended default.
 	if s.natTimeout == 0 {
 		s.natTimeout = defaultNatTimeout
+	}
+	// If no logger is provided via options, use a noop logger.
+	if s.logger == nil {
+		s.logger = noopLogger()
 	}
 
 	// TODO: Register initial data metrics at zero.
 	s.sh = NewStreamHandler(
-		NewShadowsocksStreamAuthenticator(s.ciphers, s.replayCache, &ssConnMetrics{ServiceMetrics: s.metrics, proto: "tcp"}),
+		NewShadowsocksStreamAuthenticator(s.ciphers, s.replayCache, &ssConnMetrics{ServiceMetrics: s.metrics, proto: "tcp"}, s.logger),
 		tcpReadTimeout,
 	)
+	s.sh.SetLogger(s.logger)
+
 	s.ph = NewPacketHandler(s.natTimeout, s.ciphers, s.metrics, &ssConnMetrics{ServiceMetrics: s.metrics, proto: "udp"})
+	s.ph.SetLogger(s.logger)
 
 	return s, nil
+}
+
+// WithLogger can be used to provide a custom log target. If not provided,
+// the service uses a noop logger (i.e., no logging).
+func WithLogger(l *slog.Logger) Option {
+	return func(s *ssService) {
+		s.logger = l
+	}
 }
 
 // WithCiphers option function.
