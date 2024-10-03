@@ -30,6 +30,7 @@ import (
 
 	"github.com/Jigsaw-Code/outline-sdk/transport/shadowsocks"
 	"github.com/Jigsaw-Code/outline-ss-server/ipinfo"
+	"github.com/Jigsaw-Code/outline-ss-server/key"
 	outline_prometheus "github.com/Jigsaw-Code/outline-ss-server/prometheus"
 	"github.com/Jigsaw-Code/outline-ss-server/service"
 	"github.com/lmittmann/tint"
@@ -402,6 +403,11 @@ func main() {
 	}
 	r := prometheus.WrapRegistererWithPrefix("shadowsocks_", prometheus.DefaultRegisterer)
 	r.MustRegister(serverMetrics, serviceMetrics)
+
+	sources := []key.Source{}
+	if flags.ConfigFile != "" {
+		sources = append(sources, key.NewFileSource(flags.ConfigFile))
+	}
 
 	_, err = RunOutlineServer(flags.ConfigFile, flags.natTimeout, serverMetrics, serviceMetrics, flags.replayHistory)
 	if err != nil {

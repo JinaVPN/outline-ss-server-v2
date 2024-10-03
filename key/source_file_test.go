@@ -4,11 +4,11 @@ import (
 	"io/ioutil"
 	"os"
 	"reflect"
+	"sort"
 	"syscall"
 	"testing"
 	"time"
 
-	"github.com/op/go-logging"
 	"gopkg.in/yaml.v2"
 )
 
@@ -27,7 +27,7 @@ func TestFileSource(t *testing.T) {
 	}
 	writeConfig(t, config)
 
-	src := NewFileSource(&logging.Logger{}, testFile)
+	src := NewFileSource(testFile)
 
 	ch := src.Channel()
 	received := []Key{}
@@ -93,4 +93,10 @@ func writeConfig(t *testing.T, config Config) {
 	if err != nil {
 		t.Fatalf("Failed to write temp config file")
 	}
+}
+
+func sortKeys(k []Key) {
+	sort.Slice(k, func(i, j int) bool {
+		return k[i].ID < k[j].ID
+	})
 }

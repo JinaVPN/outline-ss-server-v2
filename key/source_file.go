@@ -1,20 +1,20 @@
 package key
 
 import (
+	"fmt"
 	"io"
 	"io/ioutil"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
 	onet "github.com/Jigsaw-Code/outline-ss-server/net"
-	"github.com/op/go-logging"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 	"gopkg.in/yaml.v2"
 )
 
 type fileSource struct {
-	log          *logging.Logger
 	filename     string
 	existingKeys map[string]Key
 	closeCh      chan bool
@@ -24,9 +24,8 @@ type Config struct {
 	Keys []Key
 }
 
-func NewFileSource(logger *logging.Logger, filename string) Source {
+func NewFileSource(filename string) Source {
 	return &fileSource{
-		log:          logger,
 		filename:     filename,
 		existingKeys: make(map[string]Key),
 		closeCh:      make(chan bool),
@@ -50,7 +49,7 @@ func (f *fileSource) Channel() chan KeyCommand {
 				close(ch)
 				return
 			case <-sigHup:
-				f.log.Info("Updating config")
+				slog.Info("Updating config")
 				f.loadKeys(ch)
 			}
 		}
@@ -62,7 +61,7 @@ func (f *fileSource) Channel() chan KeyCommand {
 func (f *fileSource) loadKeys(ch chan KeyCommand) {
 	config, err := readConfig(f.filename)
 	if err != nil {
-		f.log.Errorf("Failed to read config file %v: %v", f.filename, err)
+		slog.Error(fmt.Sprintf("Failed to read config file %v: %v", f.filename, err))
 		return
 	}
 
