@@ -62,6 +62,7 @@ type CipherList interface {
 	// which is a List of *CipherEntry.  Update takes ownership of `contents`,
 	// which must not be read or written after this call.
 	Update(contents *list.List)
+	AddEntry(e *CipherEntry)
 }
 
 type cipherList struct {
@@ -114,5 +115,22 @@ func (cl *cipherList) MarkUsedByClientIP(e *list.Element, clientIP netip.Addr) {
 func (cl *cipherList) Update(src *list.List) {
 	cl.mu.Lock()
 	cl.list = src
+	cl.mu.Unlock()
+}
+
+func (cl *cipherList) AddEntry(e *CipherEntry) {
+	cl.mu.Lock()
+	cl.list.PushFront(e)
+	cl.mu.Unlock()
+}
+
+func (cl *cipherList) RemoveEntry(entry *CipherEntry) {
+	cl.mu.Lock()
+	for e := cl.list.Front(); e != nil; e = e.Next() {
+		if e.Value.(*CipherEntry) == entry {
+			cl.list.Remove(e)
+			break
+		}
+	}
 	cl.mu.Unlock()
 }

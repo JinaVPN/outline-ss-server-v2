@@ -16,11 +16,14 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net"
 	"time"
 
 	"github.com/Jigsaw-Code/outline-sdk/transport"
+	"github.com/Jigsaw-Code/outline-sdk/transport/shadowsocks"
+	"github.com/Jigsaw-Code/outline-ss-server/key"
 )
 
 const (
@@ -140,6 +143,20 @@ func (s *ssService) HandleStream(ctx context.Context, conn transport.StreamConn)
 func (s *ssService) HandlePacket(conn net.PacketConn) {
 	s.ph.Handle(conn)
 }
+
+func (s *ssService) AddKey(key key.Key, source key.Source) error {
+	cryptoKey, err := shadowsocks.NewEncryptionKey(key.Cipher, key.Secret)
+	if err != nil {
+		return fmt.Errorf("failed to create encyption key for key %v: %w", key.ID, err)
+	}
+	entry := MakeCipherEntry(key.ID, cryptoKey, key.Secret)
+	s.ciphers.AddEntry(&entry)
+	return nil
+}
+
+// func (s **ssService) RemoveKey(key key.Key, source key.Source) error {
+
+// }
 
 type ssConnMetrics struct {
 	ServiceMetrics

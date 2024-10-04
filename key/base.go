@@ -39,7 +39,7 @@ type KeyCommand struct {
 type KeyEvent struct {
 	ID                   string `json:"id"`
 	Event                string `json:"ev"`
-	ASN                  int    `json:"asn"`                  
+	ASN                  int    `json:"asn"`
 	Src                  string `json:"src"`
 	Dst                  string `json:"dst"`
 	DstPort              uint16 `json:"dst_port"`
