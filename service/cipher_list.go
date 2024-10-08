@@ -63,6 +63,7 @@ type CipherList interface {
 	// which must not be read or written after this call.
 	Update(contents *list.List)
 	AddEntry(e *CipherEntry)
+	RemoveEntry(entry *CipherEntry)
 }
 
 type cipherList struct {
