@@ -31,7 +31,7 @@ const ssModuleName = "layer4.handlers.shadowsocks"
 
 func init() {
 	caddy.RegisterModule(ModuleRegistration{
-		ID: ssModuleName,
+		ID:  ssModuleName,
 		New: func() caddy.Module { return new(ShadowsocksHandler) },
 	})
 }
