@@ -66,23 +66,23 @@ type OutlineServer struct {
 	replayCache    service.ReplayCache
 }
 
-func (s *OutlineServer) loadConfig(filename string) error {
-	configData, err := os.ReadFile(filename)
-	if err != nil {
-		return fmt.Errorf("failed to read config file %s: %w", filename, err)
-	}
-	config, err := readConfig(configData)
-	if err != nil {
-		return fmt.Errorf("failed to load config (%v): %w", filename, err)
-	}
-	if err := config.Validate(); err != nil {
-		return fmt.Errorf("failed to validate config: %w", err)
-	}
+func (s *OutlineServer) loadConfig(sources []key.Source) error {
+	// configData, err := os.ReadFile(filename)
+	// if err != nil {
+	// 	return fmt.Errorf("failed to read config file %s: %w", filename, err)
+	// }
+	// config, err := readConfig(configData)
+	// if err != nil {
+	// 	return fmt.Errorf("failed to load sources (%v): %w", sources, err)
+	// }
+	// if err := config.Validate(); err != nil {
+	// 	return fmt.Errorf("failed to validate config: %w", err)
+	// }
 
 	// We hot swap the config by having the old and new listeners both live at
 	// the same time. This means we create listeners for the new config first,
 	// and then close the old ones after.
-	stopConfig, err := s.runConfig(*config)
+	stopConfig, err := s.runConfig(sources)
 	if err != nil {
 		return err
 	}
@@ -181,7 +181,7 @@ func (ls *listenerSet) Len() int {
 	return len(ls.listenerCloseFuncs)
 }
 
-func (s *OutlineServer) runConfig(config Config) (func() error, error) {
+func (s *OutlineServer) runConfig(sources []key.Source) (func() error, error) {
 	startErrCh := make(chan error)
 	stopErrCh := make(chan error)
 	stopCh := make(chan struct{})
@@ -196,8 +196,38 @@ func (s *OutlineServer) runConfig(config Config) (func() error, error) {
 		}()
 
 		startErrCh <- func() error {
-			totalCipherCount := len(config.Keys)
+			// totalCipherCount := len(config.Keys)
 			portCiphers := make(map[int]*list.List) // Values are *List of *CipherEntry.
+			///////////////////////////////////////////////
+			for _, s := range sources {
+				source := s
+				go func() {
+					for cmd := range source.Channel() {
+						switch cmd.Action {
+						case key.AddAction:
+							cipherList, ok := portCiphers[key.Port]
+							if !ok {
+								cipherList = list.New()
+								portCiphers[key.Port] = cipherList
+							}
+							cryptoKey, err := shadowsocks.NewEncryptionKey(key.Cipher, key.Secret)
+							if err != nil {
+								return fmt.Errorf("failed to create encyption key for key %v: %w", key.ID, err)
+							}
+							entry := service.MakeCipherEntry(key.ID, cryptoKey, key.Secret)
+							cipherList.PushBack(&entry)
+
+							// cipherList.AddKey(cmd.Key, source)
+						case key.RemoveAction:
+							server.RemoveKey(cmd.Key, source)
+						default:
+							slog.Info(fmt.Sprintf("Unknown action received: %v", cmd.Action))
+						}
+					}
+				}()
+			}
+
+			/////////////////////////////////////////////
 			for _, keyConfig := range config.Keys {
 				cipherList, ok := portCiphers[keyConfig.Port]
 				if !ok {
@@ -242,41 +272,41 @@ func (s *OutlineServer) runConfig(config Config) (func() error, error) {
 				go ssService.HandlePacket(pc)
 			}
 
-			for _, serviceConfig := range config.Services {
-				ciphers, err := newCipherListFromConfig(serviceConfig)
-				if err != nil {
-					return fmt.Errorf("failed to create cipher list from config: %v", err)
-				}
-				ssService, err := service.NewShadowsocksService(
-					service.WithCiphers(ciphers),
-					service.WithNatTimeout(s.natTimeout),
-					service.WithMetrics(s.serviceMetrics),
-					service.WithReplayCache(&s.replayCache),
-					service.WithLogger(slog.Default()),
-				)
-				if err != nil {
-					return err
-				}
-				for _, lnConfig := range serviceConfig.Listeners {
-					switch lnConfig.Type {
-					case listenerTypeTCP:
-						ln, err := lnSet.ListenStream(lnConfig.Address)
-						if err != nil {
-							return err
-						}
-						slog.Info("TCP service started.", "address", ln.Addr().String())
-						go service.StreamServe(ln.AcceptStream, ssService.HandleStream)
-					case listenerTypeUDP:
-						pc, err := lnSet.ListenPacket(lnConfig.Address)
-						if err != nil {
-							return err
-						}
-						slog.Info("UDP service started.", "address", pc.LocalAddr().String())
-						go ssService.HandlePacket(pc)
-					}
-				}
-				totalCipherCount += len(serviceConfig.Keys)
-			}
+			// for _, serviceConfig := range config.Services {
+			// 	ciphers, err := newCipherListFromConfig(serviceConfig)
+			// 	if err != nil {
+			// 		return fmt.Errorf("failed to create cipher list from config: %v", err)
+			// 	}
+			// 	ssService, err := service.NewShadowsocksService(
+			// 		service.WithCiphers(ciphers),
+			// 		service.WithNatTimeout(s.natTimeout),
+			// 		service.WithMetrics(s.serviceMetrics),
+			// 		service.WithReplayCache(&s.replayCache),
+			// 		service.WithLogger(slog.Default()),
+			// 	)
+			// 	if err != nil {
+			// 		return err
+			// 	}
+			// 	for _, lnConfig := range serviceConfig.Listeners {
+			// 		switch lnConfig.Type {
+			// 		case listenerTypeTCP:
+			// 			ln, err := lnSet.ListenStream(lnConfig.Address)
+			// 			if err != nil {
+			// 				return err
+			// 			}
+			// 			slog.Info("TCP service started.", "address", ln.Addr().String())
+			// 			go service.StreamServe(ln.AcceptStream, ssService.HandleStream)
+			// 		case listenerTypeUDP:
+			// 			pc, err := lnSet.ListenPacket(lnConfig.Address)
+			// 			if err != nil {
+			// 				return err
+			// 			}
+			// 			slog.Info("UDP service started.", "address", pc.LocalAddr().String())
+			// 			go ssService.HandlePacket(pc)
+			// 		}
+			// 	}
+			// 	totalCipherCount += len(serviceConfig.Keys)
+			// }
 
 			slog.Info("Loaded config.", "access_keys", totalCipherCount, "listeners", lnSet.Len())
 			s.serverMetrics.SetNumAccessKeys(totalCipherCount, lnSet.Len())
@@ -315,7 +345,7 @@ func (s *OutlineServer) Stop() error {
 }
 
 // RunOutlineServer starts an Outline server running, and returns the server or an error.
-func RunOutlineServer(filename string, natTimeout time.Duration, serverMetrics *serverMetrics, serviceMetrics service.ServiceMetrics, replayHistory int) (*OutlineServer, error) {
+func RunOutlineServer(natTimeout time.Duration, serverMetrics *serverMetrics, serviceMetrics service.ServiceMetrics, replayHistory int, sources []key.Source) (*OutlineServer, error) {
 	server := &OutlineServer{
 		lnManager:      service.NewListenerManager(),
 		natTimeout:     natTimeout,
@@ -323,7 +353,7 @@ func RunOutlineServer(filename string, natTimeout time.Duration, serverMetrics *
 		serviceMetrics: serviceMetrics,
 		replayCache:    service.NewReplayCache(replayHistory),
 	}
-	err := server.loadConfig(filename)
+	err := server.loadConfig(sources)
 	if err != nil {
 		return nil, fmt.Errorf("failed to configure server: %w", err)
 	}
@@ -331,8 +361,8 @@ func RunOutlineServer(filename string, natTimeout time.Duration, serverMetrics *
 	signal.Notify(sigHup, syscall.SIGHUP)
 	go func() {
 		for range sigHup {
-			slog.Info("SIGHUP received. Loading config.", "config", filename)
-			if err := server.loadConfig(filename); err != nil {
+			slog.Info("SIGHUP received. Loading config.", "config", sources)
+			if err := server.loadConfig(sources); err != nil {
 				slog.Error("Failed to update server. Server state may be invalid. Fix the error and try the update again", "err", err)
 			}
 		}
@@ -413,7 +443,7 @@ func main() {
 		sources = append(sources, key.NewFileSource(flags.ConfigFile))
 	}
 
-	_, err = RunOutlineServer(flags.ConfigFile, flags.natTimeout, serverMetrics, serviceMetrics, flags.replayHistory)
+	_, err = RunOutlineServer(flags.natTimeout, serverMetrics, serviceMetrics, flags.replayHistory, sources)
 	if err != nil {
 		slog.Error("Server failed to start. Aborting.", "err", err)
 	}

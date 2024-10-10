@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Jigsaw-Code/outline-ss-server/key"
 	"github.com/Jigsaw-Code/outline-ss-server/prometheus"
 )
 
@@ -27,7 +28,7 @@ func TestRunOutlineServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create Prometheus service metrics: %v", err)
 	}
-	server, err := RunOutlineServer("config_example.yml", 30*time.Second, serverMetrics, serviceMetrics, 10000)
+	server, err := RunOutlineServer("config_example.yml", 30*time.Second, serverMetrics, serviceMetrics, 10000, []key.Source{})
 	if err != nil {
 		t.Fatalf("RunOutlineServer() error = %v", err)
 	}
