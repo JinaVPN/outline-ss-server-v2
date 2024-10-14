@@ -31,7 +31,7 @@ func MakeTestCiphers(secrets []string) (CipherList, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to create cipher %v: %w", i, err)
 		}
-		entry := MakeCipherEntry(cipherID, cipher, secrets[i])
+		entry := MakeCipherEntry(cipherID, cipher, secrets[i], nil)
 		l.PushBack(&entry)
 	}
 	cipherList := NewCipherList()

@@ -110,7 +110,7 @@ func newCipherListFromConfig(config ServiceConfig) (service.CipherList, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to create encyption key for key %v: %w", keyConfig.ID, err)
 		}
-		entry := service.MakeCipherEntry(keyConfig.ID, cryptoKey, keyConfig.Secret)
+		entry := service.MakeCipherEntry(keyConfig.ID, cryptoKey, keyConfig.Secret, nil)
 		cipherList.PushBack(&entry)
 		existingCiphers[key] = true
 	}
@@ -205,21 +205,20 @@ func (s *OutlineServer) runConfig(sources []key.Source) (func() error, error) {
 					for cmd := range source.Channel() {
 						switch cmd.Action {
 						case key.AddAction:
-							cipherList, ok := portCiphers[key.Port]
+							cipherList, ok := portCiphers[cmd.Key.Port]
 							if !ok {
 								cipherList = list.New()
-								portCiphers[key.Port] = cipherList
+								portCiphers[cmd.Key.Port] = cipherList
 							}
-							cryptoKey, err := shadowsocks.NewEncryptionKey(key.Cipher, key.Secret)
+							cryptoKey, err := shadowsocks.NewEncryptionKey(cmd.Key.Cipher, cmd.Key.Secret)
 							if err != nil {
-								return fmt.Errorf("failed to create encyption key for key %v: %w", key.ID, err)
+								slog.Error(fmt.Sprintf("failed to create encyption key for key %v: %w", cmd.Key.ID, err))
+								continue
 							}
-							entry := service.MakeCipherEntry(key.ID, cryptoKey, key.Secret)
+							entry := service.MakeCipherEntry(cmd.Key.ID, cryptoKey, cmd.Key.Secret, source)
 							cipherList.PushBack(&entry)
-
-							// cipherList.AddKey(cmd.Key, source)
-						case key.RemoveAction:
-							server.RemoveKey(cmd.Key, source)
+						// case key.RemoveAction:
+						// 	server.RemoveKey(cmd.Key, source)
 						default:
 							slog.Info(fmt.Sprintf("Unknown action received: %v", cmd.Action))
 						}

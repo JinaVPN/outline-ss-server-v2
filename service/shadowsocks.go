@@ -149,7 +149,7 @@ func (s *ssService) AddKey(key key.Key, source key.Source) error {
 	if err != nil {
 		return fmt.Errorf("failed to create encyption key for key %v: %w", key.ID, err)
 	}
-	entry := MakeCipherEntry(key.ID, cryptoKey, key.Secret)
+	entry := MakeCipherEntry(key.ID, cryptoKey, key.Secret, nil)
 	s.ciphers.AddEntry(&entry)
 	return nil
 }

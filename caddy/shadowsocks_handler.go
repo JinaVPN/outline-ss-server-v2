@@ -90,7 +90,7 @@ func (h *ShadowsocksHandler) Provision(ctx caddy.Context) error {
 		if err != nil {
 			return fmt.Errorf("failed to create encyption key for key %v: %w", cfg.ID, err)
 		}
-		entry := outline.MakeCipherEntry(cfg.ID, cryptoKey, cfg.Secret)
+		entry := outline.MakeCipherEntry(cfg.ID, cryptoKey, cfg.Secret, source)
 		cipherList.PushBack(&entry)
 		existingCiphers[key] = true
 	}
