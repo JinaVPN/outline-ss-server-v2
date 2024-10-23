@@ -197,10 +197,10 @@ func (s *OutlineServer) runConfig(sources []key.Source) (func() error, error) {
 
 		startErrCh <- func() error {
 			// totalCipherCount := len(config.Keys)
+			totalCipherCount := 0
 			portCiphers := make(map[int]*list.List) // Values are *List of *CipherEntry.
 			///////////////////////////////////////////////
-			for _, s := range sources {
-				source := s
+			for _, source := range sources {
 				go func() {
 					for cmd := range source.Channel() {
 						switch cmd.Action {
@@ -212,11 +212,15 @@ func (s *OutlineServer) runConfig(sources []key.Source) (func() error, error) {
 							}
 							cryptoKey, err := shadowsocks.NewEncryptionKey(cmd.Key.Cipher, cmd.Key.Secret)
 							if err != nil {
-								slog.Error(fmt.Sprintf("failed to create encyption key for key %v: %w", cmd.Key.ID, err))
+								slog.Error(fmt.Sprintf("failed to create encyption key for key %v: %v", cmd.Key.ID, err))
 								continue
 							}
 							entry := service.MakeCipherEntry(cmd.Key.ID, cryptoKey, cmd.Key.Secret, source)
 							cipherList.PushBack(&entry)
+							if err = s.runSSService(cmd.Key.Port, cipherList, lnSet); err != nil {
+								slog.Error(fmt.Sprintf("failed to start the shadowsocks service on port number %v", cmd.Key.Port))
+							}
+							totalCipherCount = totalCipherCount + 1
 						// case key.RemoveAction:
 						// 	server.RemoveKey(cmd.Key, source)
 						default:
@@ -227,49 +231,25 @@ func (s *OutlineServer) runConfig(sources []key.Source) (func() error, error) {
 			}
 
 			/////////////////////////////////////////////
-			for _, keyConfig := range config.Keys {
-				cipherList, ok := portCiphers[keyConfig.Port]
-				if !ok {
-					cipherList = list.New()
-					portCiphers[keyConfig.Port] = cipherList
-				}
-				cryptoKey, err := shadowsocks.NewEncryptionKey(keyConfig.Cipher, keyConfig.Secret)
-				if err != nil {
-					return fmt.Errorf("failed to create encyption key for key %v: %w", keyConfig.ID, err)
-				}
-				entry := service.MakeCipherEntry(keyConfig.ID, cryptoKey, keyConfig.Secret)
-				cipherList.PushBack(&entry)
-			}
-			for portNum, cipherList := range portCiphers {
-				// NOTE: We explicitly construct the address string with only the port
-				// number. This will result in an address that listens on all available
-				// network interfaces (both IPv4 and IPv6).
-				addr := fmt.Sprintf(":%d", portNum)
-
-				ciphers := service.NewCipherList()
-				ciphers.Update(cipherList)
-
-				ssService, err := service.NewShadowsocksService(
-					service.WithCiphers(ciphers),
-					service.WithNatTimeout(s.natTimeout),
-					service.WithMetrics(s.serviceMetrics),
-					service.WithReplayCache(&s.replayCache),
-					service.WithLogger(slog.Default()),
-				)
-				ln, err := lnSet.ListenStream(addr)
-				if err != nil {
-					return err
-				}
-				slog.Info("TCP service started.", "address", ln.Addr().String())
-				go service.StreamServe(ln.AcceptStream, ssService.HandleStream)
-
-				pc, err := lnSet.ListenPacket(addr)
-				if err != nil {
-					return err
-				}
-				slog.Info("UDP service started.", "address", pc.LocalAddr().String())
-				go ssService.HandlePacket(pc)
-			}
+			// for _, keyConfig := range config.Keys {
+			// 	cipherList, ok := portCiphers[keyConfig.Port]
+			// 	if !ok {
+			// 		cipherList = list.New()
+			// 		portCiphers[keyConfig.Port] = cipherList
+			// 	}
+			// 	cryptoKey, err := shadowsocks.NewEncryptionKey(keyConfig.Cipher, keyConfig.Secret)
+			// 	if err != nil {
+			// 		return fmt.Errorf("failed to create encyption key for key %v: %w", keyConfig.ID, err)
+			// 	}
+			// 	entry := service.MakeCipherEntry(keyConfig.ID, cryptoKey, keyConfig.Secret)
+			// 	cipherList.PushBack(&entry)
+			// }
+			// for portNum, cipherList := range portCiphers {
+			// 	err := s.runSSService(portNum, cipherList, lnSet)
+			// 	if err != nil {
+			// 		return fmt.Errorf("failed to run shadowsocks service on port %v", portNum)
+			// 	}
+			// }
 
 			// for _, serviceConfig := range config.Services {
 			// 	ciphers, err := newCipherListFromConfig(serviceConfig)
@@ -327,6 +307,38 @@ func (s *OutlineServer) runConfig(sources []key.Source) (func() error, error) {
 		stopErr := <-stopErrCh
 		return stopErr
 	}, nil
+}
+
+func (s *OutlineServer) runSSService(portNum int, cipherList *list.List, lnSet *listenerSet) error {
+	// NOTE: We explicitly construct the address string with only the port
+	// number. This will result in an address that listens on all available
+	// network interfaces (both IPv4 and IPv6).
+	addr := fmt.Sprintf(":%d", portNum)
+
+	ciphers := service.NewCipherList()
+	ciphers.Update(cipherList)
+
+	ssService, err := service.NewShadowsocksService(
+		service.WithCiphers(ciphers),
+		service.WithNatTimeout(s.natTimeout),
+		service.WithMetrics(s.serviceMetrics),
+		service.WithReplayCache(&s.replayCache),
+		service.WithLogger(slog.Default()),
+	)
+	ln, err := lnSet.ListenStream(addr)
+	if err != nil {
+		return err
+	}
+	slog.Info("TCP service started.", "address", ln.Addr().String())
+	go service.StreamServe(ln.AcceptStream, ssService.HandleStream)
+
+	pc, err := lnSet.ListenPacket(addr)
+	if err != nil {
+		return err
+	}
+	slog.Info("UDP service started.", "address", pc.LocalAddr().String())
+	go ssService.HandlePacket(pc)
+	return nil
 }
 
 // Stop stops serving the current config.

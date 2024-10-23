@@ -28,7 +28,8 @@ func TestRunOutlineServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create Prometheus service metrics: %v", err)
 	}
-	server, err := RunOutlineServer("config_example.yml", 30*time.Second, serverMetrics, serviceMetrics, 10000, []key.Source{})
+	example_config := key.NewFileSource("config_example.deprecated.yml")
+	server, err := RunOutlineServer(30*time.Second, serverMetrics, serviceMetrics, 10000, []key.Source{example_config})
 	if err != nil {
 		t.Fatalf("RunOutlineServer() error = %v", err)
 	}
