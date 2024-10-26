@@ -37,7 +37,7 @@ type CipherEntry struct {
 }
 
 // MakeCipherEntry constructs a CipherEntry.
-func MakeCipherEntry(id string, cryptoKey *shadowsocks.EncryptionKey, secret string, source key.Source) CipherEntry {
+func MakeCipherEntry(id string, cryptoKey *shadowsocks.EncryptionKey, secret string) CipherEntry {
 	var saltGenerator ServerSaltGenerator
 	if cryptoKey.SaltSize()-serverSaltMarkLen >= minSaltEntropy {
 		// Mark salts with a tag for reverse replay protection.
@@ -51,7 +51,6 @@ func MakeCipherEntry(id string, cryptoKey *shadowsocks.EncryptionKey, secret str
 		ID:            id,
 		CryptoKey:     cryptoKey,
 		SaltGenerator: saltGenerator,
-		Source:        source,
 	}
 }
 

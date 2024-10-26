@@ -66,7 +66,7 @@ type OutlineServer struct {
 	replayCache    service.ReplayCache
 }
 
-func (s *OutlineServer) loadConfig(sources []key.Source) error {
+func (s *OutlineServer) loadConfig(filename string) error {
 	// configData, err := os.ReadFile(filename)
 	// if err != nil {
 	// 	return fmt.Errorf("failed to read config file %s: %w", filename, err)
@@ -82,7 +82,7 @@ func (s *OutlineServer) loadConfig(sources []key.Source) error {
 	// We hot swap the config by having the old and new listeners both live at
 	// the same time. This means we create listeners for the new config first,
 	// and then close the old ones after.
-	stopConfig, err := s.runConfig(sources)
+	stopConfig, err := s.runSource(source)
 	if err != nil {
 		return err
 	}
@@ -110,7 +110,7 @@ func newCipherListFromConfig(config ServiceConfig) (service.CipherList, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to create encyption key for key %v: %w", keyConfig.ID, err)
 		}
-		entry := service.MakeCipherEntry(keyConfig.ID, cryptoKey, keyConfig.Secret, nil)
+		entry := service.MakeCipherEntry(keyConfig.ID, cryptoKey, keyConfig.Secret)
 		cipherList.PushBack(&entry)
 		existingCiphers[key] = true
 	}
@@ -181,7 +181,7 @@ func (ls *listenerSet) Len() int {
 	return len(ls.listenerCloseFuncs)
 }
 
-func (s *OutlineServer) runConfig(sources []key.Source) (func() error, error) {
+func (s *OutlineServer) runSource(source <-chan Config) (func() error, error) {
 	startErrCh := make(chan error)
 	stopErrCh := make(chan error)
 	stopCh := make(chan struct{})
@@ -199,93 +199,64 @@ func (s *OutlineServer) runConfig(sources []key.Source) (func() error, error) {
 			// totalCipherCount := len(config.Keys)
 			totalCipherCount := 0
 			portCiphers := make(map[int]*list.List) // Values are *List of *CipherEntry.
-			///////////////////////////////////////////////
-			for _, source := range sources {
-				go func() {
-					for cmd := range source.Channel() {
-						switch cmd.Action {
-						case key.AddAction:
-							cipherList, ok := portCiphers[cmd.Key.Port]
-							if !ok {
-								cipherList = list.New()
-								portCiphers[cmd.Key.Port] = cipherList
-							}
-							cryptoKey, err := shadowsocks.NewEncryptionKey(cmd.Key.Cipher, cmd.Key.Secret)
-							if err != nil {
-								slog.Error(fmt.Sprintf("failed to create encyption key for key %v: %v", cmd.Key.ID, err))
-								continue
-							}
-							entry := service.MakeCipherEntry(cmd.Key.ID, cryptoKey, cmd.Key.Secret, source)
-							cipherList.PushBack(&entry)
-							if err = s.runSSService(cmd.Key.Port, cipherList, lnSet); err != nil {
-								slog.Error(fmt.Sprintf("failed to start the shadowsocks service on port number %v", cmd.Key.Port))
-							}
-							totalCipherCount = totalCipherCount + 1
-						// case key.RemoveAction:
-						// 	server.RemoveKey(cmd.Key, source)
-						default:
-							slog.Info(fmt.Sprintf("Unknown action received: %v", cmd.Action))
+			go func() {
+				for config := range source {
+					for _, keyConfig := range config.Keys {
+						cipherList, ok := portCiphers[keyConfig.Port]
+						if !ok {
+							cipherList = list.New()
+							portCiphers[keyConfig.Port] = cipherList
 						}
+						cryptoKey, err := shadowsocks.NewEncryptionKey(keyConfig.Cipher, keyConfig.Secret)
+						if err != nil {
+							slog.Error(fmt.Sprintf("failed to create encyption key for key %v: %v", keyConfig.ID, err))
+							continue
+						}
+						entry := service.MakeCipherEntry(keyConfig.ID, cryptoKey, keyConfig.Secret)
+						cipherList.PushBack(&entry)
+						if err = s.runSSService(keyConfig.Port, cipherList, lnSet); err != nil {
+							slog.Error(fmt.Sprintf("failed to start the shadowsocks service on port number %v", keyConfig.Port))
+						}
+						totalCipherCount = totalCipherCount + 1
 					}
-				}()
-			}
-
-			/////////////////////////////////////////////
-			// for _, keyConfig := range config.Keys {
-			// 	cipherList, ok := portCiphers[keyConfig.Port]
-			// 	if !ok {
-			// 		cipherList = list.New()
-			// 		portCiphers[keyConfig.Port] = cipherList
-			// 	}
-			// 	cryptoKey, err := shadowsocks.NewEncryptionKey(keyConfig.Cipher, keyConfig.Secret)
-			// 	if err != nil {
-			// 		return fmt.Errorf("failed to create encyption key for key %v: %w", keyConfig.ID, err)
-			// 	}
-			// 	entry := service.MakeCipherEntry(keyConfig.ID, cryptoKey, keyConfig.Secret)
-			// 	cipherList.PushBack(&entry)
-			// }
-			// for portNum, cipherList := range portCiphers {
-			// 	err := s.runSSService(portNum, cipherList, lnSet)
-			// 	if err != nil {
-			// 		return fmt.Errorf("failed to run shadowsocks service on port %v", portNum)
-			// 	}
-			// }
-
-			// for _, serviceConfig := range config.Services {
-			// 	ciphers, err := newCipherListFromConfig(serviceConfig)
-			// 	if err != nil {
-			// 		return fmt.Errorf("failed to create cipher list from config: %v", err)
-			// 	}
-			// 	ssService, err := service.NewShadowsocksService(
-			// 		service.WithCiphers(ciphers),
-			// 		service.WithNatTimeout(s.natTimeout),
-			// 		service.WithMetrics(s.serviceMetrics),
-			// 		service.WithReplayCache(&s.replayCache),
-			// 		service.WithLogger(slog.Default()),
-			// 	)
-			// 	if err != nil {
-			// 		return err
-			// 	}
-			// 	for _, lnConfig := range serviceConfig.Listeners {
-			// 		switch lnConfig.Type {
-			// 		case listenerTypeTCP:
-			// 			ln, err := lnSet.ListenStream(lnConfig.Address)
-			// 			if err != nil {
-			// 				return err
-			// 			}
-			// 			slog.Info("TCP service started.", "address", ln.Addr().String())
-			// 			go service.StreamServe(ln.AcceptStream, ssService.HandleStream)
-			// 		case listenerTypeUDP:
-			// 			pc, err := lnSet.ListenPacket(lnConfig.Address)
-			// 			if err != nil {
-			// 				return err
-			// 			}
-			// 			slog.Info("UDP service started.", "address", pc.LocalAddr().String())
-			// 			go ssService.HandlePacket(pc)
-			// 		}
-			// 	}
-			// 	totalCipherCount += len(serviceConfig.Keys)
-			// }
+					///////////////////////////////////////////////////
+					for _, serviceConfig := range config.Services {
+						ciphers, err := newCipherListFromConfig(serviceConfig)
+						if err != nil {
+							slog.Error(fmt.Sprintf("failed to create cipher list from config: %v", err))
+						}
+						ssService, err := service.NewShadowsocksService(
+							service.WithCiphers(ciphers),
+							service.WithNatTimeout(s.natTimeout),
+							service.WithMetrics(s.serviceMetrics),
+							service.WithReplayCache(&s.replayCache),
+							service.WithLogger(slog.Default()),
+						)
+						if err != nil {
+							slog.Error(fmt.Sprintf("failed to start ssService for serviceConfig %v", serviceConfig))
+						}
+						for _, lnConfig := range serviceConfig.Listeners {
+							switch lnConfig.Type {
+							case listenerTypeTCP:
+								ln, err := lnSet.ListenStream(lnConfig.Address)
+								if err != nil {
+									slog.Error(fmt.Sprintf("%v", err))
+								}
+								slog.Info("TCP service started.", "address", ln.Addr().String())
+								go service.StreamServe(ln.AcceptStream, ssService.HandleStream)
+							case listenerTypeUDP:
+								pc, err := lnSet.ListenPacket(lnConfig.Address)
+								if err != nil {
+									slog.Error(fmt.Sprintf("%v", err))
+								}
+								slog.Info("UDP service started.", "address", pc.LocalAddr().String())
+								go ssService.HandlePacket(pc)
+							}
+						}
+						totalCipherCount += len(serviceConfig.Keys)
+					}
+				}
+			}()
 
 			slog.Info("Loaded config.", "access_keys", totalCipherCount, "listeners", lnSet.Len())
 			s.serverMetrics.SetNumAccessKeys(totalCipherCount, lnSet.Len())
@@ -356,7 +327,7 @@ func (s *OutlineServer) Stop() error {
 }
 
 // RunOutlineServer starts an Outline server running, and returns the server or an error.
-func RunOutlineServer(natTimeout time.Duration, serverMetrics *serverMetrics, serviceMetrics service.ServiceMetrics, replayHistory int, sources []key.Source) (*OutlineServer, error) {
+func RunOutlineServer(filename string, natTimeout time.Duration, serverMetrics *serverMetrics, serviceMetrics service.ServiceMetrics, replayHistory int) (*OutlineServer, error) {
 	server := &OutlineServer{
 		lnManager:      service.NewListenerManager(),
 		natTimeout:     natTimeout,
@@ -364,7 +335,7 @@ func RunOutlineServer(natTimeout time.Duration, serverMetrics *serverMetrics, se
 		serviceMetrics: serviceMetrics,
 		replayCache:    service.NewReplayCache(replayHistory),
 	}
-	err := server.loadConfig(sources)
+	err := server.loadConfig(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to configure server: %w", err)
 	}
@@ -372,8 +343,8 @@ func RunOutlineServer(natTimeout time.Duration, serverMetrics *serverMetrics, se
 	signal.Notify(sigHup, syscall.SIGHUP)
 	go func() {
 		for range sigHup {
-			slog.Info("SIGHUP received. Loading config.", "config", sources)
-			if err := server.loadConfig(sources); err != nil {
+			slog.Info("SIGHUP received. Loading config.", "config", filename)
+			if err := server.loadConfig(filename); err != nil {
 				slog.Error("Failed to update server. Server state may be invalid. Fix the error and try the update again", "err", err)
 			}
 		}

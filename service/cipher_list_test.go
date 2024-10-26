@@ -71,7 +71,7 @@ func TestAddRemoveEntries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create key: %v", err)
 	}
-	entry := MakeCipherEntry("cipher1", key, "password", nil)
+	entry := MakeCipherEntry("cipher1", key, "password")
 	ciphers.AddEntry(&entry)
 	entries := ciphers.SnapshotForClientIP(netip.Addr{})
 	found := contains(entries, &entry)
