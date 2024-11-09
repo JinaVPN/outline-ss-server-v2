@@ -23,7 +23,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -212,16 +211,19 @@ func (s *OutlineServer) runConfig(config Config) (func() error, error) {
 				cipherList.PushBack(&entry)
 			}
 			for portNum, cipherList := range portCiphers {
-				addr := net.JoinHostPort("::", strconv.Itoa(portNum))
+				// NOTE: We explicitly construct the address string with only the port
+				// number. This will result in an address that listens on all available
+				// network interfaces (both IPv4 and IPv6).
+				addr := fmt.Sprintf(":%d", portNum)
 
 				ciphers := service.NewCipherList()
 				ciphers.Update(cipherList)
-
 				ssService, err := service.NewShadowsocksService(
 					service.WithCiphers(ciphers),
 					service.WithNatTimeout(s.natTimeout),
 					service.WithMetrics(s.serviceMetrics),
 					service.WithReplayCache(&s.replayCache),
+					service.WithLogger(slog.Default()),
 				)
 				ln, err := lnSet.ListenStream(addr)
 				if err != nil {
@@ -229,7 +231,6 @@ func (s *OutlineServer) runConfig(config Config) (func() error, error) {
 				}
 				slog.Info("TCP service started.", "address", ln.Addr().String())
 				go service.StreamServe(ln.AcceptStream, ssService.HandleStream)
-
 				pc, err := lnSet.ListenPacket(addr)
 				if err != nil {
 					return err
@@ -237,7 +238,6 @@ func (s *OutlineServer) runConfig(config Config) (func() error, error) {
 				slog.Info("UDP service started.", "address", pc.LocalAddr().String())
 				go ssService.HandlePacket(pc)
 			}
-
 			for _, serviceConfig := range config.Services {
 				ciphers, err := newCipherListFromConfig(serviceConfig)
 				if err != nil {
@@ -248,6 +248,7 @@ func (s *OutlineServer) runConfig(config Config) (func() error, error) {
 					service.WithNatTimeout(s.natTimeout),
 					service.WithMetrics(s.serviceMetrics),
 					service.WithReplayCache(&s.replayCache),
+					service.WithLogger(slog.Default()),
 				)
 				if err != nil {
 					return err
