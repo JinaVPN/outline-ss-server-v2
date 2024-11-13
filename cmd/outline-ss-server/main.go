@@ -29,6 +29,7 @@ import (
 
 	"github.com/Jigsaw-Code/outline-sdk/transport/shadowsocks"
 	"github.com/Jigsaw-Code/outline-ss-server/ipinfo"
+	"github.com/Jigsaw-Code/outline-ss-server/key"
 	outline_prometheus "github.com/Jigsaw-Code/outline-ss-server/prometheus"
 	"github.com/Jigsaw-Code/outline-ss-server/service"
 	"github.com/lmittmann/tint"
@@ -63,6 +64,41 @@ type OutlineServer struct {
 	serverMetrics  *serverMetrics
 	serviceMetrics service.ServiceMetrics
 	replayCache    service.ReplayCache
+}
+
+func (s *OutlineServer) loadSource(filename string) error {
+	// configData, err := os.ReadFile(filename)
+	// if err != nil {
+	// 	return fmt.Errorf("failed to read config file %s: %w", filename, err)
+	// }
+	// config, err := readConfig(configData)
+	// if err != nil {
+	// 	return fmt.Errorf("failed to load config (%v): %w", filename, err)
+	// }
+	// if err := config.Validate(); err != nil {
+	// 	return fmt.Errorf("failed to validate config: %w", err)
+	// }
+
+	file_source := key.NewFileSource(filename)
+	for cmd := range file_source.Channel() {
+		switch cmd.Action {
+		case key.AddAction:
+			cipher_updater.Add(cmd.Key)
+		}
+	}
+
+	// We hot swap the config by having the old and new listeners both live at
+	// the same time. This means we create listeners for the new config first,
+	// and then close the old ones after.
+	stopConfig, err := s.runConfig(*config)
+	if err != nil {
+		return err
+	}
+	if err := s.Stop(); err != nil {
+		slog.Warn("Failed to stop old config.", "err", err)
+	}
+	s.stopConfig = stopConfig
+	return nil
 }
 
 func (s *OutlineServer) loadConfig(filename string) error {
