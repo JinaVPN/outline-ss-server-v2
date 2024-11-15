@@ -80,6 +80,7 @@ func (c *CipherUpdater) Addkey(key key.Key) {
 func (s *OutlineServer) loadSource(filename string) error {
 	file_source := key.NewFileSource(filename)
 	config := &Config{}
+	// TODO: populate the config with at least one key so we can start a service on the port.
 	updater := &CipherUpdater{}
 	for cmd := range file_source.Channel() {
 		switch cmd.Action {
