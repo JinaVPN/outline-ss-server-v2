@@ -66,31 +66,32 @@ type OutlineServer struct {
 	replayCache    service.ReplayCache
 }
 
-func (s *OutlineServer) loadSource(filename string) error {
-	// configData, err := os.ReadFile(filename)
-	// if err != nil {
-	// 	return fmt.Errorf("failed to read config file %s: %w", filename, err)
-	// }
-	// config, err := readConfig(configData)
-	// if err != nil {
-	// 	return fmt.Errorf("failed to load config (%v): %w", filename, err)
-	// }
-	// if err := config.Validate(); err != nil {
-	// 	return fmt.Errorf("failed to validate config: %w", err)
-	// }
+type CipherUpdater struct {
+	Ciphers *service.CipherList
+}
 
+func (c *CipherUpdater) Addkey(key key.Key) {
+	if c.Ciphers == nil {
+		return
+	}
+	// Add key to Ciphers
+}
+
+func (s *OutlineServer) loadSource(filename string) error {
 	file_source := key.NewFileSource(filename)
+	config := &Config{}
+	updater := &CipherUpdater{}
 	for cmd := range file_source.Channel() {
 		switch cmd.Action {
 		case key.AddAction:
-			cipher_updater.Add(cmd.Key)
+			updater.Addkey(cmd.Key)
 		}
 	}
 
 	// We hot swap the config by having the old and new listeners both live at
 	// the same time. This means we create listeners for the new config first,
 	// and then close the old ones after.
-	stopConfig, err := s.runConfig(*config)
+	stopConfig, err := s.runConfig(*config, updater)
 	if err != nil {
 		return err
 	}
@@ -117,7 +118,7 @@ func (s *OutlineServer) loadConfig(filename string) error {
 	// We hot swap the config by having the old and new listeners both live at
 	// the same time. This means we create listeners for the new config first,
 	// and then close the old ones after.
-	stopConfig, err := s.runConfig(*config)
+	stopConfig, err := s.runConfig(*config, nil)
 	if err != nil {
 		return err
 	}
@@ -216,7 +217,7 @@ func (ls *listenerSet) Len() int {
 	return len(ls.listenerCloseFuncs)
 }
 
-func (s *OutlineServer) runConfig(config Config) (func() error, error) {
+func (s *OutlineServer) runConfig(config Config, updater *CipherUpdater) (func() error, error) {
 	startErrCh := make(chan error)
 	stopErrCh := make(chan error)
 	stopCh := make(chan struct{})
@@ -254,6 +255,9 @@ func (s *OutlineServer) runConfig(config Config) (func() error, error) {
 
 				ciphers := service.NewCipherList()
 				ciphers.Update(cipherList)
+				if updater != nil {
+					updater.Ciphers = &ciphers
+				}
 				ssService, err := service.NewShadowsocksService(
 					service.WithCiphers(ciphers),
 					service.WithNatTimeout(s.natTimeout),
