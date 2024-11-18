@@ -67,27 +67,58 @@ type OutlineServer struct {
 }
 
 type CipherUpdater struct {
-	Ciphers *service.CipherList
+	Ciphers service.CipherList
+	cond    *sync.Cond
 }
 
-func (c *CipherUpdater) Addkey(key key.Key) {
-	if c.Ciphers == nil {
-		return
+func (c *CipherUpdater) Addkey(key key.Key) error {
+	// Wait until Ciphers are initialized.
+	c.cond.L.Lock()
+	for c.Ciphers == nil {
+		c.cond.Wait()
 	}
-	// Add key to Ciphers
+	c.cond.L.Unlock()
+	cryptoKey, err := shadowsocks.NewEncryptionKey(key.Cipher, key.Secret)
+	if err != nil {
+		return fmt.Errorf("failed to create encyption key for key %v: %w", key.ID, err)
+	}
+	entry := service.MakeCipherEntry(key.ID, cryptoKey, key.Secret)
+	c.Ciphers.AddEntry(&entry)
+	return nil
 }
 
 func (s *OutlineServer) loadSource(filename string) error {
 	file_source := key.NewFileSource(filename)
-	config := &Config{}
-	// TODO: populate the config with at least one key so we can start a service on the port.
-	updater := &CipherUpdater{}
-	for cmd := range file_source.Channel() {
-		switch cmd.Action {
-		case key.AddAction:
-			updater.Addkey(cmd.Key)
+	var config *Config
+	var wg sync.WaitGroup
+	wg.Add(1)
+	updater := &CipherUpdater{cond: sync.NewCond(&sync.Mutex{})}
+	go func() {
+		for cmd := range file_source.Channel() {
+			switch cmd.Action {
+			case key.AddAction:
+				if config == nil {
+					config = &Config{
+						Keys: []LegacyKeyServiceConfig{
+							{
+								Port: cmd.Key.Port,
+								KeyConfig: KeyConfig{
+									ID:     cmd.Key.ID,
+									Cipher: cmd.Key.Cipher,
+									Secret: cmd.Key.Secret,
+								},
+							},
+						},
+					}
+					wg.Done()
+				} else {
+					// Wait until at the cipher is inititalized!
+					updater.Addkey(cmd.Key)
+				}
+			}
 		}
-	}
+	}()
+	wg.Wait()
 
 	// We hot swap the config by having the old and new listeners both live at
 	// the same time. This means we create listeners for the new config first,
@@ -257,7 +288,10 @@ func (s *OutlineServer) runConfig(config Config, updater *CipherUpdater) (func()
 				ciphers := service.NewCipherList()
 				ciphers.Update(cipherList)
 				if updater != nil {
-					updater.Ciphers = &ciphers
+					updater.cond.L.Lock()
+					updater.Ciphers = ciphers
+					updater.cond.Broadcast() // Notify all waiting goroutines
+					updater.cond.L.Unlock()
 				}
 				ssService, err := service.NewShadowsocksService(
 					service.WithCiphers(ciphers),
