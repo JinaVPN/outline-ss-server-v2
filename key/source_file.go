@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -62,6 +63,7 @@ func (f *fileSource) loadKeys(ch chan KeyCommand) {
 	config, err := readConfig(f.filename)
 	if err != nil {
 		slog.Error(fmt.Sprintf("Failed to read config file %v: %v", f.filename, err))
+		log.Println("failed to read config file")
 		return
 	}
 

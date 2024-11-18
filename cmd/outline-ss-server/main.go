@@ -112,7 +112,6 @@ func (s *OutlineServer) loadSource(filename string) error {
 					}
 					wg.Done()
 				} else {
-					// Wait until at the cipher is inititalized!
 					updater.Addkey(cmd.Key)
 				}
 			}
@@ -394,7 +393,7 @@ func RunOutlineServer(filename string, natTimeout time.Duration, serverMetrics *
 		serviceMetrics: serviceMetrics,
 		replayCache:    service.NewReplayCache(replayHistory),
 	}
-	err := server.loadConfig(filename)
+	err := server.loadSource(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to configure server: %w", err)
 	}
@@ -403,7 +402,7 @@ func RunOutlineServer(filename string, natTimeout time.Duration, serverMetrics *
 	go func() {
 		for range sigHup {
 			slog.Info("SIGHUP received. Loading config.", "config", filename)
-			if err := server.loadConfig(filename); err != nil {
+			if err := server.loadSource(filename); err != nil {
 				slog.Error("Failed to update server. Server state may be invalid. Fix the error and try the update again", "err", err)
 			}
 		}
