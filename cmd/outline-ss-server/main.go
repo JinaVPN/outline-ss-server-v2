@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -83,6 +84,7 @@ func (c *CipherUpdater) Addkey(key key.Key) error {
 		return fmt.Errorf("failed to create encyption key for key %v: %w", key.ID, err)
 	}
 	entry := service.MakeCipherEntry(key.ID, cryptoKey, key.Secret)
+	slog.Info("Added key ", "keyID", key.ID)
 	c.Ciphers.AddEntry(&entry)
 	return nil
 }
@@ -93,8 +95,35 @@ func (s *OutlineServer) loadSource(filename string) error {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	updater := &CipherUpdater{cond: sync.NewCond(&sync.Mutex{})}
+	go func() {
+		for cmd := range file_source.Channel() {
+			switch cmd.Action {
+			case key.AddAction:
+				if config == nil {
+					config = &Config{
+						Services: []ServiceConfig{
+							ServiceConfig{
+								Listeners: []ListenerConfig{
+									ListenerConfig{Type: listenerTypeTCP, Address: "[::]:" + strconv.Itoa(cmd.Key.Port)},
+									ListenerConfig{Type: listenerTypeUDP, Address: "[::]:" + strconv.Itoa(cmd.Key.Port)},
+								},
+								Keys: []KeyConfig{
+									// This is a dummy key to initialize the ciphers.
+									KeyConfig{"user-0", "chacha20-ietf-poly1305", "Secret0"},
+								},
+							},
+						},
+					}
+					wg.Done()
+				} else {
+					updater.Addkey(cmd.Key)
+				}
+			}
+		}
+	}()
+	// Wait until at least we have one key in the config.
+	wg.Wait()
 
-	config = &Config{}
 	// We hot swap the config by having the old and new listeners both live at
 	// the same time. This means we create listeners for the new config first,
 	// and then close the old ones after.
@@ -102,15 +131,6 @@ func (s *OutlineServer) loadSource(filename string) error {
 	if err != nil {
 		return err
 	}
-
-	go func() {
-		for cmd := range file_source.Channel() {
-			switch cmd.Action {
-			case key.AddAction:
-				updater.Addkey(cmd.Key)
-			}
-		}
-	}()
 
 	if err := s.Stop(); err != nil {
 		slog.Warn("Failed to stop old config.", "err", err)
@@ -272,12 +292,6 @@ func (s *OutlineServer) runConfig(config Config, updater *CipherUpdater) (func()
 
 				ciphers := service.NewCipherList()
 				ciphers.Update(cipherList)
-				if updater != nil {
-					updater.cond.L.Lock()
-					updater.Ciphers = ciphers
-					updater.cond.Broadcast() // Notify all waiting goroutines
-					updater.cond.L.Unlock()
-				}
 				ssService, err := service.NewShadowsocksService(
 					service.WithCiphers(ciphers),
 					service.WithNatTimeout(s.natTimeout),
@@ -303,6 +317,12 @@ func (s *OutlineServer) runConfig(config Config, updater *CipherUpdater) (func()
 			}
 			for _, serviceConfig := range config.Services {
 				ciphers, err := newCipherListFromConfig(serviceConfig)
+				if updater != nil {
+					updater.cond.L.Lock()
+					updater.Ciphers = ciphers
+					updater.cond.Broadcast() // Notify all waiting goroutines
+					updater.cond.L.Unlock()
+				}
 				if err != nil {
 					return fmt.Errorf("failed to create cipher list from config: %v", err)
 				}
