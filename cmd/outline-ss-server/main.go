@@ -93,32 +93,8 @@ func (s *OutlineServer) loadSource(filename string) error {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	updater := &CipherUpdater{cond: sync.NewCond(&sync.Mutex{})}
-	go func() {
-		for cmd := range file_source.Channel() {
-			switch cmd.Action {
-			case key.AddAction:
-				if config == nil {
-					config = &Config{
-						Keys: []LegacyKeyServiceConfig{
-							{
-								Port: cmd.Key.Port,
-								KeyConfig: KeyConfig{
-									ID:     cmd.Key.ID,
-									Cipher: cmd.Key.Cipher,
-									Secret: cmd.Key.Secret,
-								},
-							},
-						},
-					}
-					wg.Done()
-				} else {
-					updater.Addkey(cmd.Key)
-				}
-			}
-		}
-	}()
-	wg.Wait()
 
+	config = &Config{}
 	// We hot swap the config by having the old and new listeners both live at
 	// the same time. This means we create listeners for the new config first,
 	// and then close the old ones after.
@@ -126,6 +102,16 @@ func (s *OutlineServer) loadSource(filename string) error {
 	if err != nil {
 		return err
 	}
+
+	go func() {
+		for cmd := range file_source.Channel() {
+			switch cmd.Action {
+			case key.AddAction:
+				updater.Addkey(cmd.Key)
+			}
+		}
+	}()
+
 	if err := s.Stop(); err != nil {
 		slog.Warn("Failed to stop old config.", "err", err)
 	}
@@ -299,6 +285,9 @@ func (s *OutlineServer) runConfig(config Config, updater *CipherUpdater) (func()
 					service.WithReplayCache(&s.replayCache),
 					service.WithLogger(slog.Default()),
 				)
+				if err != nil {
+					return err
+				}
 				ln, err := lnSet.ListenStream(addr)
 				if err != nil {
 					return err
