@@ -89,6 +89,15 @@ func (c *CipherUpdater) Addkey(key key.Key) error {
 	return nil
 }
 
+func (c *CipherUpdater) AddCipher(ciphers service.CipherList) {
+	c.cond.L.Lock()
+	if c.Ciphers == nil {
+		c.Ciphers = ciphers
+		c.cond.Broadcast() // Notify all waiting goroutines
+	}
+	c.cond.L.Unlock()
+}
+
 func (s *OutlineServer) loadSource(filename string) error {
 	file_source := key.NewFileSource(filename)
 	var config *Config
@@ -108,8 +117,7 @@ func (s *OutlineServer) loadSource(filename string) error {
 									ListenerConfig{Type: listenerTypeUDP, Address: "[::]:" + strconv.Itoa(cmd.Key.Port)},
 								},
 								Keys: []KeyConfig{
-									// This is a dummy key to initialize the ciphers.
-									KeyConfig{"user-0", "chacha20-ietf-poly1305", "Secret0"},
+									KeyConfig{cmd.Key.ID, cmd.Key.Cipher, cmd.Key.Secret},
 								},
 							},
 						},
@@ -291,6 +299,9 @@ func (s *OutlineServer) runConfig(config Config, updater *CipherUpdater) (func()
 				addr := fmt.Sprintf(":%d", portNum)
 
 				ciphers := service.NewCipherList()
+				if updater != nil {
+					updater.AddCipher(ciphers)
+				}
 				ciphers.Update(cipherList)
 				ssService, err := service.NewShadowsocksService(
 					service.WithCiphers(ciphers),
@@ -318,10 +329,7 @@ func (s *OutlineServer) runConfig(config Config, updater *CipherUpdater) (func()
 			for _, serviceConfig := range config.Services {
 				ciphers, err := newCipherListFromConfig(serviceConfig)
 				if updater != nil {
-					updater.cond.L.Lock()
-					updater.Ciphers = ciphers
-					updater.cond.Broadcast() // Notify all waiting goroutines
-					updater.cond.L.Unlock()
+					updater.AddCipher(ciphers)
 				}
 				if err != nil {
 					return fmt.Errorf("failed to create cipher list from config: %v", err)
