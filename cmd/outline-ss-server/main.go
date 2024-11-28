@@ -70,6 +70,7 @@ type OutlineServer struct {
 type CipherUpdater struct {
 	Ciphers service.CipherList
 	cond    *sync.Cond
+	ciphersByID map[string]*service.CipherEntry
 }
 
 func (c *CipherUpdater) Addkey(key key.Key) error {
@@ -86,7 +87,21 @@ func (c *CipherUpdater) Addkey(key key.Key) error {
 	entry := service.MakeCipherEntry(key.ID, cryptoKey, key.Secret)
 	slog.Info("Added key ", "keyID", key.ID)
 	c.Ciphers.AddEntry(&entry)
+	// Store the entry in a map for fast removal
+	ciphersByID[key.ID] = entry
 	return nil
+}
+
+func (c *CipherUpdater) RemoveKey(key key.Key) error {
+	if c.Ciphers == nil {
+		return fmt.Errorf("No Cipher available while removing key %v", key.ID)
+	}
+	entry, exists := c.ciphersByID[key.ID]
+	if exists {
+		c.Ciphers.RemoveEntry(c.ciphersByID[key.ID])
+	} else {
+		return fmt.Errorf("key %v was not found", key.ID)
+	}
 }
 
 func (c *CipherUpdater) AddCipher(ciphers service.CipherList) {
@@ -103,7 +118,10 @@ func (s *OutlineServer) loadSource(filename string) error {
 	var config *Config
 	var wg sync.WaitGroup
 	wg.Add(1)
-	updater := &CipherUpdater{cond: sync.NewCond(&sync.Mutex{})}
+	updater := &CipherUpdater{
+		cond: sync.NewCond(&sync.Mutex{}),
+		ciphersByID: make(map[string]*service.CipherEntry)
+	}
 	go func() {
 		for cmd := range file_source.Channel() {
 			switch cmd.Action {
@@ -126,6 +144,8 @@ func (s *OutlineServer) loadSource(filename string) error {
 				} else {
 					updater.Addkey(cmd.Key)
 				}
+			case key.RemoveAction:
+				updater.RemoveKey(cmd.Key)
 			}
 		}
 	}()
