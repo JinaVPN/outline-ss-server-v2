@@ -24,6 +24,7 @@ import (
 type ServiceConfig struct {
 	Listeners []ListenerConfig
 	Keys      []KeyConfig
+	Source    Source
 }
 
 type ListenerType string
