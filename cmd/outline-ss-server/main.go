@@ -73,7 +73,7 @@ type CipherUpdater struct {
 	ciphersByID map[string]*service.CipherEntry
 }
 
-func (c *CipherUpdater) Addkey(key key.Key) error {
+func (c *CipherUpdater) AddKey(key key.Key) error {
 	// Wait until Ciphers are initialized.
 	c.cond.L.Lock()
 	for c.Ciphers == nil {
@@ -143,7 +143,7 @@ func (s *OutlineServer) loadSource(filename string) error {
 					}
 					wg.Done()
 				} else {
-					updater.Addkey(cmd.Key)
+					updater.AddKey(cmd.Key)
 				}
 			case key.RemoveAction:
 				updater.RemoveKey(cmd.Key)
@@ -218,6 +218,8 @@ func newCipherListFromConfig(config ServiceConfig) (service.CipherList, error) {
 	}
 	ciphers := service.NewCipherList()
 	ciphers.Update(cipherList)
+
+	config.Source.Register(ciphers)
 
 	return ciphers, nil
 }
@@ -431,7 +433,7 @@ func RunOutlineServer(filename string, natTimeout time.Duration, serverMetrics *
 		serviceMetrics: serviceMetrics,
 		replayCache:    service.NewReplayCache(replayHistory),
 	}
-	err := server.loadSource(filename)
+	err := server.loadConfig(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to configure server: %w", err)
 	}
@@ -440,7 +442,7 @@ func RunOutlineServer(filename string, natTimeout time.Duration, serverMetrics *
 	go func() {
 		for range sigHup {
 			slog.Info("SIGHUP received. Loading config.", "config", filename)
-			if err := server.loadSource(filename); err != nil {
+			if err := server.loadConfig(filename); err != nil {
 				slog.Error("Failed to update server. Server state may be invalid. Fix the error and try the update again", "err", err)
 			}
 		}
