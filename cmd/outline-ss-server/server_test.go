@@ -27,7 +27,22 @@ func TestRunOutlineServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create Prometheus service metrics: %v", err)
 	}
-	server, err := RunOutlineServer("config_example.yml", 30*time.Second, serverMetrics, serviceMetrics, 10000)
+	server, err := RunOutlineServer("config_example.deprecated.yml", 30*time.Second, serverMetrics, serviceMetrics, 10000)
+	if err != nil {
+		t.Fatalf("RunOutlineServer() error = %v", err)
+	}
+	if err := server.Stop(); err != nil {
+		t.Errorf("Error while stopping server: %v", err)
+	}
+}
+
+func TestRunOutlineServerWithSource(t *testing.T) {
+	serverMetrics := newPrometheusServerMetrics()
+	serviceMetrics, err := prometheus.NewServiceMetrics(nil)
+	if err != nil {
+		t.Fatalf("Failed to create Prometheus service metrics: %v", err)
+	}
+	server, err := RunOutlineServer("config_example_source.yml", 30*time.Second, serverMetrics, serviceMetrics, 10000)
 	if err != nil {
 		t.Fatalf("RunOutlineServer() error = %v", err)
 	}
