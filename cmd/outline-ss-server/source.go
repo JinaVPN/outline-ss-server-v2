@@ -11,8 +11,7 @@ import (
 )
 
 type Source struct {
-	Url     string // URL of the key source, e.g. "file://path/to/keys"
-	updater KeyUpdater
+	Url string // URL of the key source, e.g. "file://path/to/keys"
 }
 
 type KeyUpdater struct {
@@ -46,19 +45,21 @@ func (c *KeyUpdater) RemoveKey(key key.Key) error {
 	}
 }
 
-func (s *Source) Register(c service.CipherList) {
+func (s *Source) Register(c service.CipherList, logger *slog.Logger) {
 	if strings.HasPrefix(s.Url, "file://") {
-		newFileUpdater(c, key.NewFileSource(s.Url[7:])).Listen()
+		newFileUpdater(c, key.NewFileSource(s.Url[7:]), logger).Listen()
 	}
 }
 
 type FileUpdater struct {
 	KeyUpdater
 	fileSource key.Source
+	logger     *slog.Logger
 }
 
-func newFileUpdater(c service.CipherList, s key.Source) *FileUpdater {
+func newFileUpdater(c service.CipherList, s key.Source, logger *slog.Logger) *FileUpdater {
 	fu := &FileUpdater{
+		logger:     logger,
 		fileSource: s,
 	}
 	fu.KeyUpdater.Ciphers = c
@@ -72,8 +73,10 @@ func (fu *FileUpdater) Listen() {
 			switch cmd.Action {
 			case key.AddAction:
 				fu.KeyUpdater.AddKey(cmd.Key)
+				fu.logger.Info("Added key ", "keyID", cmd.Key.ID)
 			case key.RemoveAction:
 				fu.KeyUpdater.RemoveKey(cmd.Key)
+				fu.logger.Info("Removed key ", "keyID", cmd.Key.ID)
 			}
 		}
 	}()

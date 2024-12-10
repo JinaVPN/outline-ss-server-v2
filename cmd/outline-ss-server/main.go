@@ -23,14 +23,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/Jigsaw-Code/outline-sdk/transport/shadowsocks"
 	"github.com/Jigsaw-Code/outline-ss-server/ipinfo"
-	"github.com/Jigsaw-Code/outline-ss-server/key"
 	outline_prometheus "github.com/Jigsaw-Code/outline-ss-server/prometheus"
 	"github.com/Jigsaw-Code/outline-ss-server/service"
 	"github.com/lmittmann/tint"
@@ -67,107 +65,6 @@ type OutlineServer struct {
 	replayCache    service.ReplayCache
 }
 
-type CipherUpdater struct {
-	Ciphers     service.CipherList
-	cond        *sync.Cond
-	ciphersByID map[string]*service.CipherEntry
-}
-
-func (c *CipherUpdater) AddKey(key key.Key) error {
-	// Wait until Ciphers are initialized.
-	c.cond.L.Lock()
-	for c.Ciphers == nil {
-		c.cond.Wait()
-	}
-	c.cond.L.Unlock()
-	cryptoKey, err := shadowsocks.NewEncryptionKey(key.Cipher, key.Secret)
-	if err != nil {
-		return fmt.Errorf("failed to create encyption key for key %v: %w", key.ID, err)
-	}
-	entry := service.MakeCipherEntry(key.ID, cryptoKey, key.Secret)
-	slog.Info("Added key ", "keyID", key.ID)
-	c.Ciphers.AddEntry(&entry)
-	// Store the entry in a map for fast removal
-	c.ciphersByID[key.ID] = &entry
-	return nil
-}
-
-func (c *CipherUpdater) RemoveKey(key key.Key) error {
-	if c.Ciphers == nil {
-		return fmt.Errorf("no Cipher available while removing key %v", key.ID)
-	}
-	entry, exists := c.ciphersByID[key.ID]
-	if exists {
-		c.Ciphers.RemoveEntry(entry)
-		return nil
-	} else {
-		return fmt.Errorf("key %v was not found", key.ID)
-	}
-}
-
-func (c *CipherUpdater) AddCipher(ciphers service.CipherList) {
-	c.cond.L.Lock()
-	if c.Ciphers == nil {
-		c.Ciphers = ciphers
-		c.cond.Broadcast() // Notify all waiting goroutines
-	}
-	c.cond.L.Unlock()
-}
-
-func (s *OutlineServer) loadSource(filename string) error {
-	file_source := key.NewFileSource(filename)
-	var config *Config
-	var wg sync.WaitGroup
-	wg.Add(1)
-	updater := &CipherUpdater{
-		cond:        sync.NewCond(&sync.Mutex{}),
-		ciphersByID: make(map[string]*service.CipherEntry),
-	}
-	go func() {
-		for cmd := range file_source.Channel() {
-			switch cmd.Action {
-			case key.AddAction:
-				if config == nil {
-					config = &Config{
-						Services: []ServiceConfig{
-							ServiceConfig{
-								Listeners: []ListenerConfig{
-									ListenerConfig{Type: listenerTypeTCP, Address: "[::]:" + strconv.Itoa(cmd.Key.Port)},
-									ListenerConfig{Type: listenerTypeUDP, Address: "[::]:" + strconv.Itoa(cmd.Key.Port)},
-								},
-								Keys: []KeyConfig{
-									KeyConfig{cmd.Key.ID, cmd.Key.Cipher, cmd.Key.Secret},
-								},
-							},
-						},
-					}
-					wg.Done()
-				} else {
-					updater.AddKey(cmd.Key)
-				}
-			case key.RemoveAction:
-				updater.RemoveKey(cmd.Key)
-			}
-		}
-	}()
-	// Wait until at least we have one key in the config.
-	wg.Wait()
-
-	// We hot swap the config by having the old and new listeners both live at
-	// the same time. This means we create listeners for the new config first,
-	// and then close the old ones after.
-	stopConfig, err := s.runConfig(*config, updater)
-	if err != nil {
-		return err
-	}
-
-	if err := s.Stop(); err != nil {
-		slog.Warn("Failed to stop old config.", "err", err)
-	}
-	s.stopConfig = stopConfig
-	return nil
-}
-
 func (s *OutlineServer) loadConfig(filename string) error {
 	configData, err := os.ReadFile(filename)
 	if err != nil {
@@ -184,7 +81,7 @@ func (s *OutlineServer) loadConfig(filename string) error {
 	// We hot swap the config by having the old and new listeners both live at
 	// the same time. This means we create listeners for the new config first,
 	// and then close the old ones after.
-	stopConfig, err := s.runConfig(*config, nil)
+	stopConfig, err := s.runConfig(*config)
 	if err != nil {
 		return err
 	}
@@ -219,7 +116,8 @@ func newCipherListFromConfig(config ServiceConfig) (service.CipherList, error) {
 	ciphers := service.NewCipherList()
 	ciphers.Update(cipherList)
 
-	config.Source.Register(ciphers)
+	slog.Info("newCipherListFromConfig with config", "config", config)
+	config.Source.Register(ciphers, slog.Default())
 
 	return ciphers, nil
 }
@@ -285,7 +183,7 @@ func (ls *listenerSet) Len() int {
 	return len(ls.listenerCloseFuncs)
 }
 
-func (s *OutlineServer) runConfig(config Config, updater *CipherUpdater) (func() error, error) {
+func (s *OutlineServer) runConfig(config Config) (func() error, error) {
 	startErrCh := make(chan error)
 	stopErrCh := make(chan error)
 	stopCh := make(chan struct{})
@@ -322,9 +220,6 @@ func (s *OutlineServer) runConfig(config Config, updater *CipherUpdater) (func()
 				addr := fmt.Sprintf(":%d", portNum)
 
 				ciphers := service.NewCipherList()
-				if updater != nil {
-					updater.AddCipher(ciphers)
-				}
 				ciphers.Update(cipherList)
 				ssService, err := service.NewShadowsocksService(
 					service.WithCiphers(ciphers),
@@ -351,9 +246,6 @@ func (s *OutlineServer) runConfig(config Config, updater *CipherUpdater) (func()
 			}
 			for _, serviceConfig := range config.Services {
 				ciphers, err := newCipherListFromConfig(serviceConfig)
-				if updater != nil {
-					updater.AddCipher(ciphers)
-				}
 				if err != nil {
 					return fmt.Errorf("failed to create cipher list from config: %v", err)
 				}
