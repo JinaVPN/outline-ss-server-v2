@@ -64,7 +64,7 @@ type CipherList interface {
 	// which is a List of *CipherEntry.  Update takes ownership of `contents`,
 	// which must not be read or written after this call.
 	Update(contents *list.List)
-	AddEntry(e *CipherEntry)
+	AddEntry(e *CipherEntry) func()
 	RemoveEntry(entry *CipherEntry)
 }
 
@@ -121,19 +121,11 @@ func (cl *cipherList) Update(src *list.List) {
 	cl.mu.Unlock()
 }
 
-func (cl *cipherList) AddEntry(e *CipherEntry) {
+func (cl *cipherList) AddEntry(e *CipherEntry) func() {
 	cl.mu.Lock()
-	cl.list.PushFront(e)
-	cl.mu.Unlock()
-}
-
-func (cl *cipherList) RemoveEntry(entry *CipherEntry) {
-	cl.mu.Lock()
-	for e := cl.list.Front(); e != nil; e = e.Next() {
-		if e.Value.(*CipherEntry) == entry {
-			cl.list.Remove(e)
-			break
-		}
+	defer cl.mu.Unlock()
+	el := cl.list.PushFront(e)
+	return func() {
+		cl.list.Remove(el)
 	}
-	cl.mu.Unlock()
 }

@@ -16,7 +16,7 @@ type Source struct {
 
 type KeyUpdater struct {
 	Ciphers     service.CipherList
-	ciphersByID map[string]*service.CipherEntry
+	ciphersByID map[string]func()
 }
 
 func (c *KeyUpdater) AddKey(key key.Key) error {
@@ -26,9 +26,9 @@ func (c *KeyUpdater) AddKey(key key.Key) error {
 	}
 	entry := service.MakeCipherEntry(key.ID, cryptoKey, key.Secret)
 	slog.Info("Added key ", "keyID", key.ID)
-	c.Ciphers.AddEntry(&entry)
-	// Store the entry in a map for fast removal
-	c.ciphersByID[key.ID] = &entry
+	rmFunc := c.Ciphers.AddEntry(&entry)
+	// Store the remove callback in a map for fast removal
+	c.ciphersByID[key.ID] = rmFunc
 	return nil
 }
 
@@ -36,9 +36,9 @@ func (c *KeyUpdater) RemoveKey(key key.Key) error {
 	if c.Ciphers == nil {
 		return fmt.Errorf("no Cipher available while removing key %v", key.ID)
 	}
-	entry, exists := c.ciphersByID[key.ID]
+	rmFunc, exists := c.ciphersByID[key.ID]
 	if exists {
-		c.Ciphers.RemoveEntry(entry)
+		rmFunc()
 		return nil
 	} else {
 		return fmt.Errorf("key %v was not found", key.ID)
@@ -63,7 +63,7 @@ func newFileUpdater(c service.CipherList, s key.Source, logger *slog.Logger) *Fi
 		fileSource: s,
 	}
 	fu.KeyUpdater.Ciphers = c
-	fu.KeyUpdater.ciphersByID = make(map[string]*service.CipherEntry)
+	fu.KeyUpdater.ciphersByID = make(map[string]func())
 	return fu
 }
 

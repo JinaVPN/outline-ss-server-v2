@@ -82,6 +82,29 @@ func TestAddRemoveEntries(t *testing.T) {
 	require.Equal(t, found, false, "The entry was removed but it's still in the list.")
 }
 
+func TestAddEntry(t *testing.T) {
+	ciphers := NewCipherList()
+	key, err := shadowsocks.NewEncryptionKey(shadowsocks.CHACHA20IETFPOLY1305, "testPassword")
+	if err != nil {
+		t.Fatalf("Failed to create key: %v", err)
+	}
+	entry := MakeCipherEntry("cipher1", key, "password")
+	removeFunc := ciphers.AddEntry(&entry)
+
+	// Verify the entry was added
+	entries := ciphers.SnapshotForClientIP(netip.Addr{})
+	found := contains(entries, &entry)
+	require.Equal(t, found, true, "Did not find entry that was added!")
+
+	// Use the returned function to remove the entry
+	removeFunc()
+
+	// Verify the entry was removed
+	entries = ciphers.SnapshotForClientIP(netip.Addr{})
+	found = contains(entries, &entry)
+	require.Equal(t, found, false, "The entry was removed but it's still in the list.")
+}
+
 func contains(entries []*list.Element, entry *CipherEntry) bool {
 	found := false
 	for _, e := range entries {
