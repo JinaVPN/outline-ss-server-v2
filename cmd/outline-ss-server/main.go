@@ -120,6 +120,9 @@ func newCipherListFromConfig(config ServiceConfig) (service.CipherList, error) {
 	ciphers := service.NewCipherList()
 	ciphers.Update(cipherList)
 
+	slog.Info("newCipherListFromConfig with config", "config", config)
+	config.Source.Register(ciphers, slog.Default())
+
 	return ciphers, nil
 }
 
@@ -222,7 +225,6 @@ func (s *OutlineServer) runConfig(config Config) (func() error, error) {
 
 				ciphers := service.NewCipherList()
 				ciphers.Update(cipherList)
-
 				ssService, err := service.NewShadowsocksService(
 					service.WithCiphers(ciphers),
 					service.WithNatTimeout(s.natTimeout),
@@ -230,13 +232,15 @@ func (s *OutlineServer) runConfig(config Config) (func() error, error) {
 					service.WithReplayCache(&s.replayCache),
 					service.WithLogger(slog.Default()),
 				)
+				if err != nil {
+					return err
+				}
 				ln, err := lnSet.ListenStream(addr)
 				if err != nil {
 					return err
 				}
 				slog.Info("TCP service started.", "address", ln.Addr().String())
 				go service.StreamServe(ln.AcceptStream, ssService.HandleStream)
-
 				pc, err := lnSet.ListenPacket(addr)
 				if err != nil {
 					return err
@@ -244,7 +248,6 @@ func (s *OutlineServer) runConfig(config Config) (func() error, error) {
 				slog.Info("UDP service started.", "address", pc.LocalAddr().String())
 				go ssService.HandlePacket(pc)
 			}
-
 			for _, serviceConfig := range config.Services {
 				ciphers, err := newCipherListFromConfig(serviceConfig)
 				if err != nil {

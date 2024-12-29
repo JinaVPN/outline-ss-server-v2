@@ -72,26 +72,58 @@ func debugTCP(l *slog.Logger, template string, cipherID string, attr slog.Attr) 
 // required = saltSize + 2 + cipher.TagSize, the number of bytes needed to authenticate the connection.
 const bytesForKeyFinding = 50
 
-func findAccessKey(clientReader io.Reader, clientIP netip.Addr, cipherList CipherList, l *slog.Logger) (*CipherEntry, io.Reader, []byte, time.Duration, error) {
+func findAccessKey(clientReader io.Reader, clientIP netip.Addr, cipherList CipherList, l *slog.Logger) (entry *CipherEntry, reader io.Reader, salt []byte, timeToCipher time.Duration, fastAuth bool, err error) {
 	// We snapshot the list because it may be modified while we use it.
 	ciphers := cipherList.SnapshotForClientIP(clientIP)
 	firstBytes := make([]byte, bytesForKeyFinding)
 	if n, err := io.ReadFull(clientReader, firstBytes); err != nil {
-		return nil, clientReader, nil, 0, fmt.Errorf("reading header failed after %d bytes: %w", n, err)
+		return nil, clientReader, nil, 0, false, fmt.Errorf("reading header failed after %d bytes: %w", n, err)
 	}
+
+	// [Jina] (FastAuth) Attempt to find key by extracting key ID from first bytes of the connection
+	// If the key ID exists, it will be in alphanumeric ASCII starting from any byte multiple of four.
+	fastAuthStartTime := time.Now()
+	fa := make([]byte, 0, 16)
+	for i := 0; i < bytesForKeyFinding; i += 4 {
+		for j := i; j < i+16 && j < bytesForKeyFinding; j++ {
+			if !(firstBytes[j] >= '0' && firstBytes[j] <= '9') &&
+				!(firstBytes[j] >= 'a' && firstBytes[j] <= 'z') &&
+				!(firstBytes[j] >= 'A' && firstBytes[j] <= 'Z') {
+				break
+			}
+			fa = append(fa, firstBytes[j])
+		}
+		if len(fa) == 0 {
+			continue
+		}
+		keyID := string(fa)
+		fa = fa[:0]
+		entry := cipherList.GetByID(keyID)
+		if entry == nil {
+			continue
+		}
+		if err := testCipher(entry, firstBytes); err == nil {
+			debugTCP(l, "Found key %s via fast-auth", entry.ID, slog.Any("err", err))
+			salt = firstBytes[:entry.CryptoKey.SaltSize()]
+			timeToFastAuth := time.Since(fastAuthStartTime)
+			return entry, io.MultiReader(bytes.NewReader(firstBytes), clientReader), salt, timeToFastAuth, true, nil
+		}
+	}
+	timeToFastAuth := time.Since(fastAuthStartTime)
+	// [Jina] (FastAuth) End of fast-auth attempt
 
 	findStartTime := time.Now()
 	entry, elt := findEntry(firstBytes, ciphers, l)
-	timeToCipher := time.Since(findStartTime)
+	timeToCipher = time.Since(findStartTime) + timeToFastAuth
 	if entry == nil {
 		// TODO: Ban and log client IPs with too many failures too quick to protect against DoS.
-		return nil, clientReader, nil, timeToCipher, fmt.Errorf("could not find valid TCP cipher")
+		return nil, clientReader, nil, timeToCipher, false, fmt.Errorf("could not find valid TCP cipher")
 	}
 
 	// Move the active cipher to the front, so that the search is quicker next time.
 	cipherList.MarkUsedByClientIP(elt, clientIP)
-	salt := firstBytes[:entry.CryptoKey.SaltSize()]
-	return entry, io.MultiReader(bytes.NewReader(firstBytes), clientReader), salt, timeToCipher, nil
+	salt = firstBytes[:entry.CryptoKey.SaltSize()]
+	return entry, io.MultiReader(bytes.NewReader(firstBytes), clientReader), salt, timeToCipher, false, nil
 }
 
 // Implements a trial decryption search.  This assumes that all ciphers are AEAD.
@@ -112,6 +144,15 @@ func findEntry(firstBytes []byte, ciphers []*list.Element, l *slog.Logger) (*Cip
 	return nil, nil
 }
 
+func testCipher(entry *CipherEntry, firstBytes []byte) error {
+	// To hold the decrypted chunk length.
+	chunkLenBuf := [2]byte{}
+
+	cipher := entry.CryptoKey
+	_, err := shadowsocks.Unpack(chunkLenBuf[:0], firstBytes[:cipher.SaltSize()+2+cipher.TagSize()], cipher)
+	return err
+}
+
 type StreamAuthenticateFunc func(clientConn transport.StreamConn) (string, transport.StreamConn, *onet.ConnectionError)
 
 // NewShadowsocksStreamAuthenticator creates a stream authenticator that uses Shadowsocks.
@@ -125,7 +166,7 @@ func NewShadowsocksStreamAuthenticator(ciphers CipherList, replayCache *ReplayCa
 	}
 	return func(clientConn transport.StreamConn) (string, transport.StreamConn, *onet.ConnectionError) {
 		// Find the cipher and acess key id.
-		cipherEntry, clientReader, clientSalt, timeToCipher, keyErr := findAccessKey(clientConn, remoteIP(clientConn), ciphers, l)
+		cipherEntry, clientReader, clientSalt, timeToCipher, _, keyErr := findAccessKey(clientConn, remoteIP(clientConn), ciphers, l)
 		metrics.AddCipherSearch(keyErr == nil, timeToCipher)
 		if keyErr != nil {
 			const status = "ERR_CIPHER"
