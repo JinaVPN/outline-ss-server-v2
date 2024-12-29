@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/Jigsaw-Code/outline-sdk/transport"
+
+	onet "github.com/Jigsaw-Code/outline-ss-server/net"
 )
 
 const (
@@ -51,14 +53,17 @@ type Service interface {
 type Option func(s *ssService)
 
 type ssService struct {
-	logger      *slog.Logger
-	metrics     ServiceMetrics
-	ciphers     CipherList
-	natTimeout  time.Duration
-	replayCache *ReplayCache
+	logger            *slog.Logger
+	metrics           ServiceMetrics
+	ciphers           CipherList
+	natTimeout        time.Duration
+	targetIPValidator onet.TargetIPValidator
+	replayCache       *ReplayCache
 
-	sh StreamHandler
-	ph PacketHandler
+	streamDialer   transport.StreamDialer
+	sh             StreamHandler
+	packetListener transport.PacketListener
+	ph             PacketHandler
 }
 
 // NewShadowsocksService creates a new Shadowsocks service.
@@ -83,9 +88,15 @@ func NewShadowsocksService(opts ...Option) (Service, error) {
 		NewShadowsocksStreamAuthenticator(s.ciphers, s.replayCache, &ssConnMetrics{ServiceMetrics: s.metrics, proto: "tcp"}, s.logger),
 		tcpReadTimeout,
 	)
+	if s.streamDialer != nil {
+		s.sh.SetTargetDialer(s.streamDialer)
+	}
 	s.sh.SetLogger(s.logger)
 
 	s.ph = NewPacketHandler(s.natTimeout, s.ciphers, s.metrics, &ssConnMetrics{ServiceMetrics: s.metrics, proto: "udp"})
+	if s.packetListener != nil {
+		s.ph.SetTargetPacketListener(s.packetListener)
+	}
 	s.ph.SetLogger(s.logger)
 
 	return s, nil
@@ -124,6 +135,20 @@ func WithReplayCache(replayCache *ReplayCache) Option {
 func WithNatTimeout(natTimeout time.Duration) Option {
 	return func(s *ssService) {
 		s.natTimeout = natTimeout
+	}
+}
+
+// WithStreamDialer option function.
+func WithStreamDialer(dialer transport.StreamDialer) Option {
+	return func(s *ssService) {
+		s.streamDialer = dialer
+	}
+}
+
+// WithPacketListener option function.
+func WithPacketListener(listener transport.PacketListener) Option {
+	return func(s *ssService) {
+		s.packetListener = listener
 	}
 }
 
