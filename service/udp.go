@@ -15,6 +15,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -24,9 +25,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Jigsaw-Code/outline-sdk/transport"
 	"github.com/Jigsaw-Code/outline-sdk/transport/shadowsocks"
-	onet "github.com/Jigsaw-Code/outline-ss-server/net"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
+
+	onet "github.com/Jigsaw-Code/outline-ss-server/net"
 )
 
 // UDPConnMetrics is used to report metrics on UDP connections.
@@ -86,9 +89,10 @@ type packetHandler struct {
 	m                 UDPMetrics
 	ssm               ShadowsocksConnMetrics
 	targetIPValidator onet.TargetIPValidator
+	targetListener    transport.PacketListener
 }
 
-// NewPacketHandler creates a UDPService
+// NewPacketHandler creates a PacketHandler
 func NewPacketHandler(natTimeout time.Duration, cipherList CipherList, m UDPMetrics, ssMetrics ShadowsocksConnMetrics) PacketHandler {
 	if m == nil {
 		m = &NoOpUDPMetrics{}
@@ -103,6 +107,7 @@ func NewPacketHandler(natTimeout time.Duration, cipherList CipherList, m UDPMetr
 		m:                 m,
 		ssm:               ssMetrics,
 		targetIPValidator: onet.RequirePublicIP,
+		targetListener:    MakeTargetUDPListener(0),
 	}
 }
 
@@ -112,6 +117,8 @@ type PacketHandler interface {
 	SetLogger(l *slog.Logger)
 	// SetTargetIPValidator sets the function to be used to validate the target IP addresses.
 	SetTargetIPValidator(targetIPValidator onet.TargetIPValidator)
+	// SetTargetPacketListener sets the packet listener to use for target connections.
+	SetTargetPacketListener(targetListener transport.PacketListener)
 	// Handle returns after clientConn closes and all the sub goroutines return.
 	Handle(clientConn net.PacketConn)
 }
@@ -125,6 +132,10 @@ func (h *packetHandler) SetLogger(l *slog.Logger) {
 
 func (h *packetHandler) SetTargetIPValidator(targetIPValidator onet.TargetIPValidator) {
 	h.targetIPValidator = targetIPValidator
+}
+
+func (h *packetHandler) SetTargetPacketListener(targetListener transport.PacketListener) {
+	h.targetListener = targetListener
 }
 
 // Listen on addr for encrypted packets and basically do UDP NAT.
@@ -181,10 +192,11 @@ func (h *packetHandler) Handle(clientConn net.PacketConn) {
 					return onetErr
 				}
 
-				udpConn, err := net.ListenPacket("udp", "")
+				udpConn, err := h.targetListener.ListenPacket(context.Background())
 				if err != nil {
-					return onet.NewConnectionError("ERR_CREATE_SOCKET", "Failed to create UDP socket", err)
+					return onet.NewConnectionError("ERR_CREATE_SOCKET", "Failed to create a `PacketConn`", err)
 				}
+
 				targetConn = nm.Add(clientAddr, clientConn, cryptoKey, udpConn, keyID)
 			} else {
 				unpackStart := time.Now()
@@ -468,8 +480,10 @@ var _ UDPConnMetrics = (*NoOpUDPConnMetrics)(nil)
 
 func (m *NoOpUDPConnMetrics) AddPacketFromClient(status string, clientProxyBytes, proxyTargetBytes int64) {
 }
+
 func (m *NoOpUDPConnMetrics) AddPacketFromTarget(status string, targetProxyBytes, proxyClientBytes int64) {
 }
+
 func (m *NoOpUDPConnMetrics) RemoveNatEntry() {}
 
 // NoOpUDPMetrics is a [UDPMetrics] that doesn't do anything. Useful in tests
