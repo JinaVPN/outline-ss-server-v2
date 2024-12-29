@@ -66,17 +66,19 @@ type CipherList interface {
 	Update(contents *list.List)
 	AddEntry(e *CipherEntry) func()
 	RemoveEntry(entry *CipherEntry)
+	GetByID(string) *CipherEntry
 }
 
 type cipherList struct {
 	CipherList
-	list *list.List
-	mu   sync.RWMutex
+	list      *list.List
+	mu        sync.RWMutex
+	cipherMap map[string]*CipherEntry
 }
 
 // NewCipherList creates an empty CipherList
 func NewCipherList() CipherList {
-	return &cipherList{list: list.New()}
+	return &cipherList{list: list.New(), cipherMap: make(map[string]*CipherEntry)}
 }
 
 func matchesIP(e *list.Element, clientIP netip.Addr) bool {
@@ -125,7 +127,15 @@ func (cl *cipherList) AddEntry(e *CipherEntry) func() {
 	cl.mu.Lock()
 	defer cl.mu.Unlock()
 	el := cl.list.PushFront(e)
+	cl.cipherMap[e.ID] = e
 	return func() {
 		cl.list.Remove(el)
+		delete(cl.cipherMap, e.ID)
 	}
+}
+
+func (cl *cipherList) GetByID(id string) *CipherEntry {
+	cl.mu.RLock()
+	defer cl.mu.RUnlock()
+	return cl.cipherMap[id]
 }
