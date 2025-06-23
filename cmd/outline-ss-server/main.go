@@ -135,6 +135,9 @@ func newCipherListFromConfig(config ServiceConfig) (service.CipherList, error) {
 	ciphers := service.NewCipherList()
 	ciphers.Update(cipherList)
 
+	slog.Info("newCipherListFromConfig with config", "config", config)
+	config.Source.Register(ciphers, slog.Default())
+
 	return ciphers, nil
 }
 
@@ -304,9 +307,6 @@ func (s *OutlineServer) runConfig(config Config) (func() error, error) {
 					service.WithPacketListener(service.MakeTargetUDPListener(onet.RequirePublicIP, s.natTimeout, serviceConfig.Dialer.Fwmark)),
 					service.WithLogger(slog.Default()),
 				)
-				if err != nil {
-					return err
-				}
 				logger := slog.Default().With(
 					slog.Int("access_keys", len(serviceConfig.Keys)),
 					slog.Any("fwmark", func() any {

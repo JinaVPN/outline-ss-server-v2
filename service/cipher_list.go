@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	"github.com/Jigsaw-Code/outline-sdk/transport/shadowsocks"
+	"github.com/Jigsaw-Code/outline-ss-server/key"
 )
 
 // Don't add a tag if it would reduce the salt entropy below this amount.
@@ -32,6 +33,7 @@ type CipherEntry struct {
 	CryptoKey     *shadowsocks.EncryptionKey
 	SaltGenerator ServerSaltGenerator
 	lastClientIP  netip.Addr
+	Source        key.Source
 }
 
 // MakeCipherEntry constructs a CipherEntry.
@@ -62,17 +64,21 @@ type CipherList interface {
 	// which is a List of *CipherEntry.  Update takes ownership of `contents`,
 	// which must not be read or written after this call.
 	Update(contents *list.List)
+	AddEntry(e *CipherEntry) func()
+	RemoveEntry(entry *CipherEntry)
+	GetByID(string) *CipherEntry
 }
 
 type cipherList struct {
 	CipherList
-	list *list.List
-	mu   sync.RWMutex
+	list      *list.List
+	mu        sync.RWMutex
+	cipherMap map[string]*CipherEntry
 }
 
 // NewCipherList creates an empty CipherList
 func NewCipherList() CipherList {
-	return &cipherList{list: list.New()}
+	return &cipherList{list: list.New(), cipherMap: make(map[string]*CipherEntry)}
 }
 
 func matchesIP(e *list.Element, clientIP netip.Addr) bool {
@@ -115,4 +121,21 @@ func (cl *cipherList) Update(src *list.List) {
 	cl.mu.Lock()
 	cl.list = src
 	cl.mu.Unlock()
+}
+
+func (cl *cipherList) AddEntry(e *CipherEntry) func() {
+	cl.mu.Lock()
+	defer cl.mu.Unlock()
+	el := cl.list.PushFront(e)
+	cl.cipherMap[e.ID] = e
+	return func() {
+		cl.list.Remove(el)
+		delete(cl.cipherMap, e.ID)
+	}
+}
+
+func (cl *cipherList) GetByID(id string) *CipherEntry {
+	cl.mu.RLock()
+	defer cl.mu.RUnlock()
+	return cl.cipherMap[id]
 }
