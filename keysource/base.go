@@ -1,10 +1,10 @@
-package key
+package keysource
 
 import (
-	"io"
 	"time"
 
-	onet "github.com/Jigsaw-Code/outline-ss-server/net"
+	"github.com/Jigsaw-Code/outline-sdk/transport"
+	"github.com/Jigsaw-Code/outline-ss-server/service"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 )
 
@@ -36,28 +36,35 @@ type KeyCommand struct {
 	Key    Key
 }
 
-type KeyEvent struct {
-	ID                   string `json:"id"`
-	Event                string `json:"ev"`
-	ASN                  int    `json:"asn"`
-	Src                  string `json:"src"`
-	Dst                  string `json:"dst"`
-	DstPort              uint16 `json:"dst_port"`
-	DstHost              string `json:"dst_host"`
-	Downstream           int64  `json:"dn"`
-	Upstream             int64  `json:"up"`
-	Timestamp            int64  `json:"tm"`
-	Count                int64  `json:"cn"`
-	FastAuth             bool   `json:"fa"`
-	CipherLookupTime     int64  `json:"clt"`
-	CipherLookupAttempts int    `json:"cla"`
-}
+type KeyEvent = service.EventData
 
 type Source interface {
 	Channel() chan KeyCommand
-	WrapConn(keyID string, writer onet.DuplexConn, reader io.Reader, eventTemplate KeyEvent) (onet.DuplexConn, io.Reader, func(socks.Addr, onet.DuplexConn))
 	SendEvent(KeyEvent)
-	Close() error
+	WrapConn(keyID string, writer transport.StreamConn, eventTemplate service.EventData) (transport.StreamConn, func(socks.Addr, transport.StreamConn))
+	// Close() error
+}
+
+func StartSource(s Source, cipherList service.CipherList) error {
+	c := s.Channel()
+
+	keyUpdater := KeyUpdater{
+		Ciphers:     cipherList,
+		ciphersByID: make(map[string]func()),
+	}
+
+	go func() {
+		for e := range c {
+			switch e.Action {
+			case AddAction:
+				keyUpdater.AddKey(e.Key)
+			case RemoveAction:
+				keyUpdater.RemoveKey(e.Key)
+			}
+		}
+	}()
+
+	return nil
 }
 
 func MergeSources(sources []Source) chan KeyCommand {

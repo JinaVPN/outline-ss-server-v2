@@ -287,7 +287,7 @@ func TestProbeRandom(t *testing.T) {
 	require.NoError(t, err, "MakeTestCiphers failed: %v", err)
 	testMetrics := &probeTestMetrics{}
 	authFunc := NewShadowsocksStreamAuthenticator(cipherList, nil, &fakeShadowsocksMetrics{}, nil)
-	handler := NewStreamHandler(authFunc, 200*time.Millisecond)
+	handler := NewStreamHandler(authFunc, 200*time.Millisecond, nil)
 	done := make(chan struct{})
 	go func() {
 		StreamServe(
@@ -367,7 +367,7 @@ func TestProbeClientBytesBasicTruncated(t *testing.T) {
 	cipher := firstCipher(cipherList)
 	testMetrics := &probeTestMetrics{}
 	authFunc := NewShadowsocksStreamAuthenticator(cipherList, nil, &fakeShadowsocksMetrics{}, nil)
-	handler := NewStreamHandler(authFunc, 200*time.Millisecond)
+	handler := NewStreamHandler(authFunc, 200*time.Millisecond, nil)
 	handler.SetTargetDialer(MakeValidatingTCPStreamDialer(allowAll, 0))
 	done := make(chan struct{})
 	go func() {
@@ -405,7 +405,7 @@ func TestProbeClientBytesBasicModified(t *testing.T) {
 	cipher := firstCipher(cipherList)
 	testMetrics := &probeTestMetrics{}
 	authFunc := NewShadowsocksStreamAuthenticator(cipherList, nil, &fakeShadowsocksMetrics{}, nil)
-	handler := NewStreamHandler(authFunc, 200*time.Millisecond)
+	handler := NewStreamHandler(authFunc, 200*time.Millisecond, nil)
 	handler.SetTargetDialer(MakeValidatingTCPStreamDialer(allowAll, 0))
 	done := make(chan struct{})
 	go func() {
@@ -444,7 +444,7 @@ func TestProbeClientBytesCoalescedModified(t *testing.T) {
 	cipher := firstCipher(cipherList)
 	testMetrics := &probeTestMetrics{}
 	authFunc := NewShadowsocksStreamAuthenticator(cipherList, nil, &fakeShadowsocksMetrics{}, nil)
-	handler := NewStreamHandler(authFunc, 200*time.Millisecond)
+	handler := NewStreamHandler(authFunc, 200*time.Millisecond, nil)
 	handler.SetTargetDialer(MakeValidatingTCPStreamDialer(allowAll, 0))
 	done := make(chan struct{})
 	go func() {
@@ -490,7 +490,7 @@ func TestProbeServerBytesModified(t *testing.T) {
 	cipher := firstCipher(cipherList)
 	testMetrics := &probeTestMetrics{}
 	authFunc := NewShadowsocksStreamAuthenticator(cipherList, nil, &fakeShadowsocksMetrics{}, nil)
-	handler := NewStreamHandler(authFunc, 200*time.Millisecond)
+	handler := NewStreamHandler(authFunc, 200*time.Millisecond, nil)
 	done := make(chan struct{})
 	go func() {
 		StreamServe(
@@ -524,7 +524,7 @@ func TestReplayDefense(t *testing.T) {
 	testMetrics := &probeTestMetrics{}
 	const testTimeout = 200 * time.Millisecond
 	authFunc := NewShadowsocksStreamAuthenticator(cipherList, &replayCache, testMetrics, nil)
-	handler := NewStreamHandler(authFunc, testTimeout)
+	handler := NewStreamHandler(authFunc, testTimeout, nil)
 	snapshot := cipherList.SnapshotForClientIP(netip.Addr{})
 	cipherEntry := snapshot[0].Value.(*CipherEntry)
 	cipher := cipherEntry.CryptoKey
@@ -606,7 +606,7 @@ func TestReverseReplayDefense(t *testing.T) {
 	testMetrics := &probeTestMetrics{}
 	const testTimeout = 200 * time.Millisecond
 	authFunc := NewShadowsocksStreamAuthenticator(cipherList, &replayCache, testMetrics, nil)
-	handler := NewStreamHandler(authFunc, testTimeout)
+	handler := NewStreamHandler(authFunc, testTimeout, nil)
 	snapshot := cipherList.SnapshotForClientIP(netip.Addr{})
 	cipherEntry := snapshot[0].Value.(*CipherEntry)
 	cipher := cipherEntry.CryptoKey
@@ -680,7 +680,7 @@ func probeExpectTimeout(t *testing.T, payloadSize int) {
 	require.NoError(t, err, "MakeTestCiphers failed: %v", err)
 	testMetrics := &probeTestMetrics{}
 	authFunc := NewShadowsocksStreamAuthenticator(cipherList, nil, &fakeShadowsocksMetrics{}, nil)
-	handler := NewStreamHandler(authFunc, testTimeout)
+	handler := NewStreamHandler(authFunc, testTimeout, nil)
 
 	done := make(chan struct{})
 	go func() {

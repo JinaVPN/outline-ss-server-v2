@@ -20,7 +20,6 @@ import (
 	"sync"
 
 	"github.com/Jigsaw-Code/outline-sdk/transport/shadowsocks"
-	"github.com/Jigsaw-Code/outline-ss-server/key"
 )
 
 // Don't add a tag if it would reduce the salt entropy below this amount.
@@ -33,7 +32,6 @@ type CipherEntry struct {
 	CryptoKey     *shadowsocks.EncryptionKey
 	SaltGenerator ServerSaltGenerator
 	lastClientIP  netip.Addr
-	Source        key.Source
 }
 
 // MakeCipherEntry constructs a CipherEntry.

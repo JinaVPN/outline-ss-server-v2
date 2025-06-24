@@ -139,7 +139,7 @@ func TestTCPEcho(t *testing.T) {
 	const testTimeout = 200 * time.Millisecond
 	testMetrics := &statusMetrics{}
 	authFunc := service.NewShadowsocksStreamAuthenticator(cipherList, &replayCache, &fakeShadowsocksMetrics{}, nil)
-	handler := service.NewStreamHandler(authFunc, testTimeout)
+	handler := service.NewStreamHandler(authFunc, testTimeout, nil)
 	handler.SetTargetDialer(&transport.TCPDialer{})
 	done := make(chan struct{})
 	go func() {
@@ -219,7 +219,7 @@ func TestRestrictedAddresses(t *testing.T) {
 	const testTimeout = 200 * time.Millisecond
 	testMetrics := &statusMetrics{}
 	authFunc := service.NewShadowsocksStreamAuthenticator(cipherList, nil, &fakeShadowsocksMetrics{}, nil)
-	handler := service.NewStreamHandler(authFunc, testTimeout)
+	handler := service.NewStreamHandler(authFunc, testTimeout, nil)
 	done := make(chan struct{})
 	go func() {
 		service.StreamServe(
@@ -407,7 +407,7 @@ func BenchmarkTCPThroughput(b *testing.B) {
 	const testTimeout = 200 * time.Millisecond
 	testMetrics := &service.NoOpTCPConnMetrics{}
 	authFunc := service.NewShadowsocksStreamAuthenticator(cipherList, nil, &fakeShadowsocksMetrics{}, nil)
-	handler := service.NewStreamHandler(authFunc, testTimeout)
+	handler := service.NewStreamHandler(authFunc, testTimeout, nil)
 	handler.SetTargetDialer(&transport.TCPDialer{})
 	done := make(chan struct{})
 	go func() {
@@ -474,7 +474,7 @@ func BenchmarkTCPMultiplexing(b *testing.B) {
 	const testTimeout = 200 * time.Millisecond
 	testMetrics := &service.NoOpTCPConnMetrics{}
 	authFunc := service.NewShadowsocksStreamAuthenticator(cipherList, &replayCache, &fakeShadowsocksMetrics{}, nil)
-	handler := service.NewStreamHandler(authFunc, testTimeout)
+	handler := service.NewStreamHandler(authFunc, testTimeout, nil)
 	handler.SetTargetDialer(&transport.TCPDialer{})
 	done := make(chan struct{})
 	go func() {

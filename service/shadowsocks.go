@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Jigsaw-Code/outline-sdk/transport"
+	"github.com/shadowsocks/go-shadowsocks2/socks"
 
 	onet "github.com/Jigsaw-Code/outline-ss-server/net"
 )
@@ -42,6 +43,27 @@ type ServiceMetrics interface {
 // Option is a Shadowsocks service constructor option.
 type Option func(s *ssService)
 
+type StreamWrapper interface {
+	WrapConn(keyID string, conn transport.StreamConn, eventTemplate EventData) (transport.StreamConn, func(socks.Addr, transport.StreamConn))
+}
+
+type EventData struct {
+	ID                   string `json:"id"`
+	Event                string `json:"ev"`
+	ASN                  int    `json:"asn"`
+	Src                  string `json:"src"`
+	Dst                  string `json:"dst"`
+	DstPort              uint16 `json:"dst_port"`
+	DstHost              string `json:"dst_host"`
+	Downstream           int64  `json:"dn"`
+	Upstream             int64  `json:"up"`
+	Timestamp            int64  `json:"tm"`
+	Count                int64  `json:"cn"`
+	FastAuth             bool   `json:"fa"`
+	CipherLookupTime     int64  `json:"clt"`
+	CipherLookupAttempts int    `json:"cla"`
+}
+
 type ssService struct {
 	logger            *slog.Logger
 	ciphers           CipherList
@@ -51,6 +73,8 @@ type ssService struct {
 
 	streamDialer   transport.StreamDialer
 	packetListener transport.PacketListener
+
+	streamWrappers []StreamWrapper
 }
 
 // NewShadowsocksHandlers creates new Shadowsocks stream and packet handlers.
@@ -75,6 +99,7 @@ func NewShadowsocksHandlers(opts ...Option) (StreamHandler, AssociationHandler) 
 	sh := NewStreamHandler(
 		NewShadowsocksStreamAuthenticator(s.ciphers, s.replayCache, tcpShadowsocksConnMetrics, s.logger),
 		tcpReadTimeout,
+		s.streamWrappers,
 	)
 	if s.streamDialer != nil {
 		sh.SetTargetDialer(s.streamDialer)
@@ -129,6 +154,12 @@ func WithStreamDialer(dialer transport.StreamDialer) Option {
 func WithPacketListener(listener transport.PacketListener) Option {
 	return func(s *ssService) {
 		s.packetListener = listener
+	}
+}
+
+func WithStreamWrappers(wrappers []StreamWrapper) Option {
+	return func(s *ssService) {
+		s.streamWrappers = wrappers
 	}
 }
 

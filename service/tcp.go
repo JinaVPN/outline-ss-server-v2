@@ -153,7 +153,13 @@ func testCipher(entry *CipherEntry, firstBytes []byte) error {
 	return err
 }
 
-type StreamAuthenticateFunc func(clientConn transport.StreamConn) (string, transport.StreamConn, *onet.ConnectionError)
+type AuthData struct {
+	ID       string
+	Conn     transport.StreamConn
+	FastAuth bool
+}
+
+type StreamAuthenticateFunc func(clientConn transport.StreamConn) (*AuthData, *onet.ConnectionError)
 
 // NewShadowsocksStreamAuthenticator creates a stream authenticator that uses Shadowsocks.
 // TODO(fortuna): Offer alternative transports.
@@ -164,13 +170,13 @@ func NewShadowsocksStreamAuthenticator(ciphers CipherList, replayCache *ReplayCa
 	if l == nil {
 		l = noopLogger()
 	}
-	return func(clientConn transport.StreamConn) (string, transport.StreamConn, *onet.ConnectionError) {
+	return func(clientConn transport.StreamConn) (*AuthData, *onet.ConnectionError) {
 		// Find the cipher and acess key id.
-		cipherEntry, clientReader, clientSalt, timeToCipher, _, keyErr := findAccessKey(clientConn, remoteIP(clientConn), ciphers, l)
+		cipherEntry, clientReader, clientSalt, timeToCipher, fastAuth, keyErr := findAccessKey(clientConn, remoteIP(clientConn), ciphers, l)
 		metrics.AddCipherSearch(keyErr == nil, timeToCipher)
 		if keyErr != nil {
 			const status = "ERR_CIPHER"
-			return "", nil, onet.NewConnectionError(status, "Failed to find a valid cipher", keyErr)
+			return nil, onet.NewConnectionError(status, "Failed to find a valid cipher", keyErr)
 		}
 		var id string
 		if cipherEntry != nil {
@@ -187,33 +193,39 @@ func NewShadowsocksStreamAuthenticator(ciphers CipherList, replayCache *ReplayCa
 			} else {
 				status = "ERR_REPLAY_CLIENT"
 			}
-			return id, nil, onet.NewConnectionError(status, "Replay detected", nil)
+			return nil, onet.NewConnectionError(status, "Replay detected", nil)
 		}
 
 		ssr := shadowsocks.NewReader(clientReader, cipherEntry.CryptoKey)
 		ssw := shadowsocks.NewWriter(clientConn, cipherEntry.CryptoKey)
 		ssw.SetSaltGenerator(cipherEntry.SaltGenerator)
-		return id, transport.WrapConn(clientConn, ssr, ssw), nil
+		return &AuthData{
+			ID:       id,
+			Conn:     transport.WrapConn(clientConn, ssr, ssw),
+			FastAuth: fastAuth,
+		}, nil
 	}
 }
 
 type streamHandler struct {
-	logger       *slog.Logger
-	listenerId   string
-	readTimeout  time.Duration
-	authenticate StreamAuthenticateFunc
-	dialer       transport.StreamDialer
+	logger         *slog.Logger
+	listenerId     string
+	readTimeout    time.Duration
+	authenticate   StreamAuthenticateFunc
+	dialer         transport.StreamDialer
+	streamWrappers []StreamWrapper
 }
 
 var _ StreamHandler = (*streamHandler)(nil)
 
 // NewStreamHandler creates a StreamHandler
-func NewStreamHandler(authenticate StreamAuthenticateFunc, timeout time.Duration) StreamHandler {
+func NewStreamHandler(authenticate StreamAuthenticateFunc, timeout time.Duration, wrapprs []StreamWrapper) StreamHandler {
 	return &streamHandler{
-		logger:       noopLogger(),
-		readTimeout:  timeout,
-		authenticate: authenticate,
-		dialer:       MakeValidatingTCPStreamDialer(onet.RequirePublicIP, 0),
+		logger:         noopLogger(),
+		readTimeout:    timeout,
+		authenticate:   authenticate,
+		dialer:         MakeValidatingTCPStreamDialer(onet.RequirePublicIP, 0),
+		streamWrappers: wrapprs,
 	}
 }
 
@@ -373,13 +385,26 @@ func (h *streamHandler) handleConnection(ctx context.Context, outerConn transpor
 	}
 	outerConn.SetReadDeadline(readDeadline)
 
-	id, innerConn, authErr := h.authenticate(outerConn)
+	authData, authErr := h.authenticate(outerConn)
 	if authErr != nil {
 		// Drain to protect against probing attacks.
 		h.absorbProbe(outerConn, connMetrics, authErr.Status, proxyMetrics)
 		return authErr
 	}
+	id := authData.ID
+	innerConn := authData.Conn
 	connMetrics.AddAuthentication(id)
+
+	var setDestination func(socks.Addr, transport.StreamConn)
+	// for _, wrapper := range h.streamWrappers {
+	// 	innerConn, setDestination = wrapper.WrapConn(id, innerConn, EventData{
+	// 		ID:                   id,
+	// 		Src:                  remoteIP(outerConn).String(),
+	// 		FastAuth:             authData.FastAuth,
+	// 		CipherLookupTime:     0,
+	// 		CipherLookupAttempts: 0,
+	// 	})
+	// }
 
 	// Read target address and dial it.
 	tgtAddr, err := getProxyRequest(innerConn)
@@ -397,6 +422,14 @@ func (h *streamHandler) handleConnection(ctx context.Context, outerConn transpor
 			return nil, err
 		}
 		tgtConn = metrics.MeasureConn(tgtConn, &proxyMetrics.ProxyTarget, &proxyMetrics.TargetProxy)
+
+		if setDestination != nil {
+			addr, err := socks.ReadAddr(innerConn)
+			if err == nil {
+				setDestination(addr, tgtConn)
+			}
+		}
+
 		return tgtConn, nil
 	})
 	return proxyConnection(h.logger, ctx, dialer, tgtAddr, innerConn)

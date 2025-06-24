@@ -1,0 +1,42 @@
+# Copyright 2024 The Outline Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+web:
+  servers:
+    - id: web_server
+      listen:
+        - "0.0.0.0:8080"
+
+services:
+  - listeners:
+      # TODO(sbruens): Allow a string-based listener config, as a convenient short-form
+      # to create a direct listener, e.g. `- tcp/[::]:9000`.
+      - type: tcp
+        address: "[::]:9000"
+      - type: udp
+        address: "[::]:9000"
+      - type: websocket-stream
+        web_server: web_server
+        path: "/tcp"  # Prevent probing by serving under a secret path.
+      - type: websocket-packet
+        web_server: web_server
+        path: "/udp"  # Prevent probing by serving under a secret path.
+    sources:
+      - hive:
+          url: hive.jinavpn.com:443
+          secret: Ay27P8RF7mb32RQ4y4FDaCVP
+    dialer:
+      # fwmark can be used in conjunction with other Linux networking features like cgroups, network namespaces, and TC (Traffic Control) for sophisticated network management.
+      # Value of 0 disables fwmark (SO_MARK) (Linux Only)
+      fwmark: 0

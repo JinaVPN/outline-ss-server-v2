@@ -39,6 +39,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/Jigsaw-Code/outline-ss-server/ipinfo"
+	"github.com/Jigsaw-Code/outline-ss-server/keysource"
 	onet "github.com/Jigsaw-Code/outline-ss-server/net"
 	outline_prometheus "github.com/Jigsaw-Code/outline-ss-server/prometheus"
 	"github.com/Jigsaw-Code/outline-ss-server/service"
@@ -134,9 +135,6 @@ func newCipherListFromConfig(config ServiceConfig) (service.CipherList, error) {
 	}
 	ciphers := service.NewCipherList()
 	ciphers.Update(cipherList)
-
-	slog.Info("newCipherListFromConfig with config", "config", config)
-	config.Source.Register(ciphers, slog.Default())
 
 	return ciphers, nil
 }
@@ -299,6 +297,20 @@ func (s *OutlineServer) runConfig(config Config) (func() error, error) {
 				if err != nil {
 					return fmt.Errorf("failed to create cipher list from config: %v", err)
 				}
+
+				sources := []service.StreamWrapper{}
+				for _, sc := range serviceConfig.Sources {
+					slog.Info("Starting source", "source", sc)
+					source, err := sc.ToSource()
+					if err != nil {
+						return fmt.Errorf("failed to create key source: %w", err)
+					}
+					if err := keysource.StartSource(source, ciphers); err != nil {
+						return fmt.Errorf("failed to start key source: %w", err)
+					}
+					sources = append(sources, source)
+				}
+
 				streamHandler, associationHandler := service.NewShadowsocksHandlers(
 					service.WithCiphers(ciphers),
 					service.WithMetrics(s.serviceMetrics),
@@ -306,6 +318,7 @@ func (s *OutlineServer) runConfig(config Config) (func() error, error) {
 					service.WithStreamDialer(service.MakeValidatingTCPStreamDialer(onet.RequirePublicIP, serviceConfig.Dialer.Fwmark)),
 					service.WithPacketListener(service.MakeTargetUDPListener(onet.RequirePublicIP, s.natTimeout, serviceConfig.Dialer.Fwmark)),
 					service.WithLogger(slog.Default()),
+					service.WithStreamWrappers(sources),
 				)
 				logger := slog.Default().With(
 					slog.Int("access_keys", len(serviceConfig.Keys)),

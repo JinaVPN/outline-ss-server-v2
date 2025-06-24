@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Jigsaw-Code/outline-ss-server/keysource"
 	"github.com/go-viper/mapstructure/v2"
 	"gopkg.in/yaml.v3"
 )
@@ -34,7 +35,7 @@ type Validator interface {
 type ServiceConfig struct {
 	Listeners []ListenerConfig
 	Keys      []KeyConfig
-	Source    Source
+	Sources   []SourceConfig
 	Dialer    DialerConfig
 }
 
@@ -261,4 +262,35 @@ func readConfig(configData []byte) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
 	return &config, nil
+}
+
+type SourceConfig struct {
+	Hive *HiveConfig
+}
+
+type HiveConfig struct {
+	Url    string `yaml:"url"`
+	Secret string `yaml:"secret"`
+}
+
+func (c *SourceConfig) validate() error {
+	if c.Hive == nil {
+		return errors.New("a source must be specified (only hive is supported currently)")
+	}
+
+	if c.Hive.Url == "" {
+		return errors.New("`url` must be specified for hive source")
+	}
+	if c.Hive.Secret == "" {
+		return errors.New("`key` must be specified for hive source")
+	}
+	return nil
+}
+
+func (c *SourceConfig) ToSource() (keysource.Source, error) {
+	if c.Hive != nil {
+		return keysource.NewHiveSource(c.Hive.Url, c.Hive.Secret, true, false), nil
+	}
+
+	return nil, fmt.Errorf("unsupported source type")
 }
